@@ -123,11 +123,21 @@ DeerFlow has newly integrated the intelligent search and crawling toolset indepe
        api_key: $OPENAI_API_KEY
        use_responses_api: true
        output_version: responses/v1
+
+     - name: custom-gpt-5.4-responses
+       display_name: GPT-5.4 (Custom Responses)
+       use: deerflow.models.patched_responses_openai:PatchedResponsesOpenAI
+       model: gpt-5.4
+       api_key: $CUSTOM_OPENAI_API_KEY
+       base_url: http://your-gateway/v1
+       output_version: responses/v1
    ```
 
    OpenRouter and similar OpenAI-compatible gateways should be configured with `langchain_openai:ChatOpenAI` plus `base_url`. If you prefer a provider-specific environment variable name, point `api_key` at that variable explicitly (for example `api_key: $OPENROUTER_API_KEY`).
 
    To route OpenAI models through `/v1/responses`, keep using `langchain_openai:ChatOpenAI` and set `use_responses_api: true` with `output_version: responses/v1`.
+
+   For self-hosted or custom `/v1/responses` gateways, prefer `deerflow.models.patched_responses_openai:PatchedResponsesOpenAI`. It keeps LangChain's OpenAI transport but normalizes streamed tool-call chunks and reasoning summaries that some custom endpoints emit differently from OpenAI's native API.
 
    CLI-backed provider examples:
 

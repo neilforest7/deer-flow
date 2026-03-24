@@ -503,6 +503,39 @@ def test_openai_compatible_provider_multiple_models(monkeypatch):
     assert captured.get("model") == "MiniMax-M2.5-highspeed"
 
 
+def test_patched_responses_provider_passes_base_url_and_output_version(monkeypatch):
+    model = ModelConfig(
+        name="custom-responses",
+        display_name="Custom Responses",
+        description=None,
+        use="deerflow.models.patched_responses_openai:PatchedResponsesOpenAI",
+        model="gpt-5.4",
+        base_url="https://example.com/v1",
+        api_key="test-key",
+        output_version="responses/v1",
+        supports_vision=True,
+        supports_thinking=False,
+    )
+    cfg = _make_app_config([model])
+    _patch_factory(monkeypatch, cfg)
+
+    captured: dict = {}
+
+    class CapturingModel(FakeChatModel):
+        def __init__(self, **kwargs):
+            captured.update(kwargs)
+            BaseChatModel.__init__(self, **kwargs)
+
+    monkeypatch.setattr(factory_module, "resolve_class", lambda path, base: CapturingModel)
+
+    factory_module.create_chat_model(name="custom-responses")
+
+    assert captured.get("model") == "gpt-5.4"
+    assert captured.get("base_url") == "https://example.com/v1"
+    assert captured.get("api_key") == "test-key"
+    assert captured.get("output_version") == "responses/v1"
+
+
 # ---------------------------------------------------------------------------
 # Codex provider reasoning_effort mapping
 # ---------------------------------------------------------------------------

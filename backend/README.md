@@ -179,6 +179,14 @@ models:
     use_responses_api: true
     output_version: responses/v1
     supports_vision: true
+
+  - name: custom-gpt-5.4-responses
+    display_name: GPT-5.4 (Custom Responses)
+    use: deerflow.models.patched_responses_openai:PatchedResponsesOpenAI
+    model: gpt-5.4
+    api_key: $CUSTOM_OPENAI_API_KEY
+    base_url: http://your-gateway/v1
+    output_version: responses/v1
 ```
 
 Set your API keys:
@@ -186,6 +194,8 @@ Set your API keys:
 ```bash
 export OPENAI_API_KEY="your-api-key-here"
 ```
+
+Use `langchain_openai:ChatOpenAI` for OpenAI's native `/v1/responses`. Use `deerflow.models.patched_responses_openai:PatchedResponsesOpenAI` for custom or self-hosted Responses endpoints that stream tool calls differently.
 
 ### Running
 

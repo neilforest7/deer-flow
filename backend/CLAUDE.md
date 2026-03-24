@@ -96,6 +96,8 @@ make format     # Format code with ruff
 Regression tests related to Docker/provisioner behavior:
 - `tests/test_docker_sandbox_mode_detection.py` (mode detection from `config.yaml`)
 - `tests/test_provisioner_kubeconfig.py` (kubeconfig file/directory handling)
+- `tests/test_patched_responses_openai.py` (unit coverage for the custom Responses adapter)
+- `tests/test_patched_responses_openai_live.py` (opt-in live contract tests for custom `/v1/responses` endpoints via `DEERFLOW_RESPONSES_TEST_*`)
 
 Boundary check (harness → app import firewall):
 - `tests/test_harness_boundary.py` — ensures `packages/harness/deerflow/` never imports from `app.*`
@@ -183,6 +185,7 @@ Configuration priority:
 
 Config values starting with `$` are resolved as environment variables (e.g., `$OPENAI_API_KEY`).
 `ModelConfig` also declares `use_responses_api` and `output_version` so OpenAI `/v1/responses` can be enabled explicitly while still using `langchain_openai:ChatOpenAI`.
+For custom or self-hosted `/v1/responses` endpoints that are not fully compatible with LangChain's streaming expectations, use `deerflow.models.patched_responses_openai:PatchedResponsesOpenAI` from the harness layer instead of modifying LangChain or importing app code. The adapter exists specifically to normalize streamed tool-call fragments and reasoning summaries while preserving the harness/app boundary.
 
 **Extensions Configuration** (`extensions_config.json`):
 

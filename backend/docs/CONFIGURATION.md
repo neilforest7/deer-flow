@@ -38,6 +38,7 @@ models:
 - DeepSeek (`langchain_deepseek:ChatDeepSeek`)
 - Claude Code OAuth (`deerflow.models.claude_provider:ClaudeChatModel`)
 - Codex CLI (`deerflow.models.openai_codex_provider:CodexChatModel`)
+- Custom OpenAI Responses gateway (`deerflow.models.patched_responses_openai:PatchedResponsesOpenAI`)
 - Any LangChain-compatible provider
 
 CLI-backed provider examples:
@@ -77,6 +78,21 @@ models:
     use_responses_api: true
     output_version: responses/v1
 ```
+
+For self-hosted or custom `/v1/responses` gateways, use DeerFlow's adapter instead of patching LangChain directly:
+
+```yaml
+models:
+  - name: custom-gpt-5.4-responses
+    display_name: GPT-5.4 (Custom Responses)
+    use: deerflow.models.patched_responses_openai:PatchedResponsesOpenAI
+    model: gpt-5.4
+    api_key: $CUSTOM_OPENAI_API_KEY
+    base_url: http://your-gateway/v1
+    output_version: responses/v1
+```
+
+`PatchedResponsesOpenAI` keeps LangChain's OpenAI transport but normalizes streamed tool-call events and reasoning summaries for custom endpoints that do not exactly match OpenAI's Responses streaming behavior.
 
 For OpenAI-compatible gateways (for example Novita or OpenRouter), keep using `langchain_openai:ChatOpenAI` and set `base_url`:
 

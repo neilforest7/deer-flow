@@ -14,7 +14,7 @@ from __future__ import annotations
 import os
 
 import pytest
-from langchain_core.messages import HumanMessage
+from langchain_core.messages import HumanMessage, ToolMessage
 from langchain_core.tools import tool
 
 from deerflow.models.patched_responses_openai import PatchedResponsesOpenAI
@@ -68,6 +68,35 @@ def test_stream_with_tools_avoids_invalid_tool_calls(model: PatchedResponsesOpen
     assert combined.tool_calls
     assert combined.tool_calls[0]["name"] == "echo"
     assert combined.tool_calls[0]["args"] == {"text": "hi"}
+
+
+def test_tool_follow_up_adapts_to_endpoint_storage_behavior(model: PatchedResponsesOpenAI):
+    bound = model.bind_tools([echo])
+    prompt = "Call the echo tool with text set to hi. After receiving the tool result, answer with exactly DONE."
+
+    first = bound.invoke([HumanMessage(content=prompt)])
+    assert first.tool_calls, "Expected a tool call from the first response"
+
+    tool_call = first.tool_calls[0]
+    tool_result = ToolMessage(content="hi", tool_call_id=tool_call["id"], name=tool_call["name"])
+    messages = [HumanMessage(content=prompt), first, tool_result]
+    payload = bound._get_request_payload(messages)
+
+    if first.response_metadata.get("store") is True:
+        assert payload.get("previous_response_id") == first.response_metadata["id"]
+        assert payload["input"] == [{"type": "function_call_output", "output": "hi", "call_id": tool_call["id"]}]
+    else:
+        assert "previous_response_id" not in payload
+        assert any(
+            isinstance(item, dict)
+            and item.get("type") == "function_call"
+            and item.get("call_id") == tool_call["id"]
+            for item in payload["input"]
+        )
+
+    second = bound.invoke(messages)
+    text_blocks = [part["text"] for part in second.content if isinstance(part, dict) and part.get("type") == "text"]
+    assert "DONE" in "".join(text_blocks)
 
 
 def test_reasoning_multi_turn_stays_stable():

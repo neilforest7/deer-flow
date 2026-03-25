@@ -21,8 +21,10 @@ from langchain_core.messages import AIMessage, AIMessageChunk
 from langchain_core.outputs import ChatGeneration, ChatGenerationChunk, ChatResult
 from langchain_openai import ChatOpenAI
 from langchain_openai.chat_models.base import (
+    _construct_lc_result_from_responses_api,
     _construct_responses_api_payload,
     _convert_responses_chunk_to_generation_chunk,
+    _is_pydantic_class,
 )
 
 logger = logging.getLogger(__name__)
@@ -118,8 +120,35 @@ def _should_auto_use_previous_response_id(
     return store is not False and use_previous_response_id is not False
 
 
+def _response_metadata_allows_previous_response_id(
+    response_metadata: dict[str, Any],
+    *,
+    allow_unverified: bool,
+) -> bool:
+    if allow_unverified:
+        return True
+    return response_metadata.get("store") is True
+
+
+def _get_messages_after_response_id(
+    messages: list[Any],
+    response_id: str,
+) -> list[Any] | None:
+    for i in range(len(messages) - 1, -1, -1):
+        msg = messages[i]
+        if not isinstance(msg, AIMessage):
+            continue
+        msg_response_id = msg.response_metadata.get("id")
+        if isinstance(msg_response_id, str) and msg_response_id == response_id:
+            return list(messages[i + 1 :])
+
+    return None
+
+
 def _get_last_messages_for_custom_responses(
     messages: list[Any],
+    *,
+    allow_unverified_previous_response_id: bool = False,
 ) -> tuple[list[Any], str | None]:
     for i in range(len(messages) - 1, -1, -1):
         msg = messages[i]
@@ -127,6 +156,16 @@ def _get_last_messages_for_custom_responses(
             continue
         response_id = msg.response_metadata.get("id")
         if isinstance(response_id, str) and response_id.strip():
+            if not _response_metadata_allows_previous_response_id(
+                msg.response_metadata,
+                allow_unverified=allow_unverified_previous_response_id,
+            ):
+                logger.info(
+                    "Responses replay falling back to stateless mode because the prior response was not confirmed as stored: response_id=%s store=%r",
+                    response_id,
+                    msg.response_metadata.get("store"),
+                )
+                return list(messages), None
             return list(messages[i + 1 :]), response_id
 
     return list(messages), None
@@ -166,6 +205,62 @@ def _sanitize_responses_input(
         sanitized_input.append(sanitized_item)
 
     return sanitized_input, has_reasoning, has_encrypted_reasoning
+
+
+def _extract_response_metadata_flags(response: Any) -> dict[str, Any]:
+    if response is None:
+        return {}
+
+    if hasattr(response, "model_dump"):
+        data = response.model_dump(exclude_none=True, mode="json")
+    elif isinstance(response, dict):
+        data = response
+    else:
+        data = {}
+
+    metadata: dict[str, Any] = {}
+    for key in ("store", "previous_response_id"):
+        if key in data:
+            metadata[key] = data[key]
+    return metadata
+
+
+def _apply_response_metadata_flags_to_message(
+    message: AIMessage | AIMessageChunk,
+    metadata_flags: dict[str, Any],
+) -> AIMessage | AIMessageChunk:
+    if not metadata_flags:
+        return message
+
+    response_metadata = dict(message.response_metadata)
+    response_metadata.update(metadata_flags)
+    return message.model_copy(update={"response_metadata": response_metadata})
+
+
+def _apply_response_metadata_flags_to_result(
+    result: ChatResult,
+    metadata_flags: dict[str, Any],
+) -> ChatResult:
+    if not metadata_flags:
+        return result
+
+    generations: list[ChatGeneration] = []
+    for generation in result.generations:
+        updated_message = _apply_response_metadata_flags_to_message(
+            generation.message,
+            metadata_flags,
+        )
+        if updated_message is generation.message:
+            generations.append(generation)
+            continue
+        generations.append(
+            ChatGeneration(
+                message=updated_message,
+                generation_info=generation.generation_info,
+            )
+        )
+
+    return ChatResult(generations=generations, llm_output=result.llm_output)
 
 
 def _should_suppress_partial_tool_call_chunk(message: AIMessageChunk) -> bool:
@@ -339,13 +434,23 @@ class PatchedResponsesOpenAI(ChatOpenAI):
             payload["store"] = True
             store = True
 
+        should_sanitize_replayed_input = False
         explicit_previous_response_id = payload.get("previous_response_id")
         if explicit_previous_response_id:
-            payload_to_use, _ = _get_last_messages_for_custom_responses(messages)
-            if not payload_to_use:
+            trimmed_messages = _get_messages_after_response_id(
+                messages,
+                explicit_previous_response_id,
+            )
+            if trimmed_messages is None or not trimmed_messages:
                 payload_to_use = messages
+                should_sanitize_replayed_input = True
+            else:
+                payload_to_use = trimmed_messages
         elif _should_auto_use_previous_response_id(use_previous_response_id, store):
-            last_messages, previous_response_id = _get_last_messages_for_custom_responses(messages)
+            last_messages, previous_response_id = _get_last_messages_for_custom_responses(
+                messages,
+                allow_unverified_previous_response_id=use_previous_response_id is True,
+            )
             payload_to_use = last_messages if previous_response_id else messages
             if previous_response_id:
                 payload["previous_response_id"] = previous_response_id
@@ -357,7 +462,7 @@ class PatchedResponsesOpenAI(ChatOpenAI):
         if store is False and payload.get("reasoning") is not None:
             _ensure_reasoning_encrypted_content_include(payload)
 
-        if payload.get("previous_response_id") is None:
+        if payload.get("previous_response_id") is None or should_sanitize_replayed_input:
             sanitized_input, has_reasoning, has_encrypted_reasoning = _sanitize_responses_input(payload.get("input", []))
             payload["input"] = sanitized_input
             if has_reasoning and not has_encrypted_reasoning:
@@ -386,7 +491,39 @@ class PatchedResponsesOpenAI(ChatOpenAI):
         run_manager: CallbackManagerForLLMRun | None = None,
         **kwargs: Any,
     ) -> ChatResult:
-        result = super()._generate(messages, stop=stop, run_manager=run_manager, **kwargs)
+        payload = self._get_request_payload(messages, stop=stop, **kwargs)
+        if not self._use_responses_api(payload):
+            result = super()._generate(messages, stop=stop, run_manager=run_manager, **kwargs)
+            return _normalize_chat_result(result)
+
+        self._ensure_sync_client_available()
+        raw_response = None
+        generation_info = None
+        original_schema_obj = kwargs.get("response_format")
+        try:
+            if original_schema_obj and _is_pydantic_class(original_schema_obj):
+                raw_response = self.root_client.responses.with_raw_response.parse(**payload)
+            else:
+                raw_response = self.root_client.responses.with_raw_response.create(**payload)
+            response = raw_response.parse()
+        except Exception as e:
+            if raw_response is not None and hasattr(raw_response, "http_response"):
+                e.response = raw_response.http_response  # type: ignore[attr-defined]
+            raise
+
+        if self.include_response_headers and raw_response is not None and hasattr(raw_response, "headers"):
+            generation_info = {"headers": dict(raw_response.headers)}
+
+        result = _construct_lc_result_from_responses_api(
+            response,
+            schema=original_schema_obj,
+            metadata=generation_info,
+            output_version=self.output_version,
+        )
+        result = _apply_response_metadata_flags_to_result(
+            result,
+            _extract_response_metadata_flags(response),
+        )
         return _normalize_chat_result(result)
 
     async def _agenerate(
@@ -396,7 +533,38 @@ class PatchedResponsesOpenAI(ChatOpenAI):
         run_manager: AsyncCallbackManagerForLLMRun | None = None,
         **kwargs: Any,
     ) -> ChatResult:
-        result = await super()._agenerate(messages, stop=stop, run_manager=run_manager, **kwargs)
+        payload = self._get_request_payload(messages, stop=stop, **kwargs)
+        if not self._use_responses_api(payload):
+            result = await super()._agenerate(messages, stop=stop, run_manager=run_manager, **kwargs)
+            return _normalize_chat_result(result)
+
+        raw_response = None
+        generation_info = None
+        original_schema_obj = kwargs.get("response_format")
+        try:
+            if original_schema_obj and _is_pydantic_class(original_schema_obj):
+                raw_response = await self.root_async_client.responses.with_raw_response.parse(**payload)
+            else:
+                raw_response = await self.root_async_client.responses.with_raw_response.create(**payload)
+            response = raw_response.parse()
+        except Exception as e:
+            if raw_response is not None and hasattr(raw_response, "http_response"):
+                e.response = raw_response.http_response  # type: ignore[attr-defined]
+            raise
+
+        if self.include_response_headers and raw_response is not None and hasattr(raw_response, "headers"):
+            generation_info = {"headers": dict(raw_response.headers)}
+
+        result = _construct_lc_result_from_responses_api(
+            response,
+            schema=original_schema_obj,
+            metadata=generation_info,
+            output_version=self.output_version,
+        )
+        result = _apply_response_metadata_flags_to_result(
+            result,
+            _extract_response_metadata_flags(response),
+        )
         return _normalize_chat_result(result)
 
     def _stream_responses(
@@ -428,6 +596,7 @@ class PatchedResponsesOpenAI(ChatOpenAI):
             pending_tool_calls: dict[int, dict[str, Any]] = {}
             for raw_chunk in response:
                 chunk_type = _get_value(raw_chunk, "type")
+                response_metadata_flags = _extract_response_metadata_flags(_get_value(raw_chunk, "response"))
                 if chunk_type == "response.output_item.added" and _get_value(_get_value(raw_chunk, "item"), "type") == "function_call":
                     output_index = _get_value(raw_chunk, "output_index", -1)
                     if current_output_index != output_index:
@@ -500,6 +669,14 @@ class PatchedResponsesOpenAI(ChatOpenAI):
                 )
                 if generation_chunk is None:
                     continue
+                if response_metadata_flags:
+                    generation_chunk = ChatGenerationChunk(
+                        message=_apply_response_metadata_flags_to_message(
+                            generation_chunk.message,
+                            response_metadata_flags,
+                        ),
+                        generation_info=generation_chunk.generation_info,
+                    )
 
                 normalized_chunk = _normalize_generation_chunk(generation_chunk)
                 if normalized_chunk is None:
@@ -550,6 +727,7 @@ class PatchedResponsesOpenAI(ChatOpenAI):
             pending_tool_calls: dict[int, dict[str, Any]] = {}
             async for raw_chunk in response:
                 chunk_type = _get_value(raw_chunk, "type")
+                response_metadata_flags = _extract_response_metadata_flags(_get_value(raw_chunk, "response"))
                 if chunk_type == "response.output_item.added" and _get_value(_get_value(raw_chunk, "item"), "type") == "function_call":
                     output_index = _get_value(raw_chunk, "output_index", -1)
                     if current_output_index != output_index:
@@ -622,6 +800,14 @@ class PatchedResponsesOpenAI(ChatOpenAI):
                 )
                 if generation_chunk is None:
                     continue
+                if response_metadata_flags:
+                    generation_chunk = ChatGenerationChunk(
+                        message=_apply_response_metadata_flags_to_message(
+                            generation_chunk.message,
+                            response_metadata_flags,
+                        ),
+                        generation_info=generation_chunk.generation_info,
+                    )
 
                 normalized_chunk = _normalize_generation_chunk(generation_chunk)
                 if normalized_chunk is None:

@@ -3,7 +3,7 @@ from __future__ import annotations
 import logging
 
 import pytest
-from langchain_core.messages import AIMessage, AIMessageChunk, HumanMessage, SystemMessage
+from langchain_core.messages import AIMessage, AIMessageChunk, HumanMessage, SystemMessage, ToolMessage
 from langchain_core.outputs import ChatGeneration, ChatGenerationChunk, ChatResult
 
 import deerflow.models.patched_responses_openai as patched_responses_openai
@@ -218,7 +218,7 @@ def test_request_payload_defaults_to_stateful_responses_mode():
     model = _make_model()
     previous = AIMessage(
         content=[{"type": "text", "text": "Hello", "id": "msg_123"}],
-        response_metadata={"id": "resp_123"},
+        response_metadata={"id": "resp_123", "store": True},
     )
 
     payload = model._get_request_payload([HumanMessage(content="Hi"), previous, HumanMessage(content="Again?")])
@@ -232,7 +232,7 @@ def test_request_payload_accepts_custom_previous_response_id_formats():
     model = _make_model()
     previous = AIMessage(
         content=[{"type": "text", "text": "Hello", "id": "msg_123"}],
-        response_metadata={"id": "gateway-123"},
+        response_metadata={"id": "gateway-123", "store": True},
     )
 
     payload = model._get_request_payload([HumanMessage(content="Hi"), previous, HumanMessage(content="Again?")])
@@ -421,6 +421,124 @@ def test_explicit_previous_response_id_is_respected_even_when_store_is_false():
     )
 
     assert payload["store"] is False
+    assert payload["previous_response_id"] == "resp_123"
+    assert payload["input"] == [{"content": "Again?", "role": "user"}]
+
+
+def test_explicit_previous_response_id_trims_buffered_history_without_store_gate():
+    model = _make_model()
+    previous = AIMessage(
+        content=[
+            {
+                "type": "function_call",
+                "name": "echo",
+                "arguments": '{"text":"hi"}',
+                "call_id": "call_123",
+                "id": "fc_123",
+                "status": "completed",
+            }
+        ],
+        tool_calls=[{"name": "echo", "args": {"text": "hi"}, "id": "call_123", "type": "tool_call"}],
+        response_metadata={"id": "resp_123", "store": False},
+    )
+    tool_result = ToolMessage(content="hi", tool_call_id="call_123", name="echo")
+
+    payload = model._get_request_payload(
+        [HumanMessage(content="Start"), previous, tool_result, HumanMessage(content="Again?")],
+        previous_response_id="resp_123",
+    )
+
+    assert payload["previous_response_id"] == "resp_123"
+    assert payload["input"] == [
+        {"type": "function_call_output", "output": "hi", "call_id": "call_123"},
+        {"content": "Again?", "role": "user"},
+    ]
+
+
+def test_explicit_previous_response_id_keeps_current_behavior_when_buffer_does_not_contain_it():
+    model = _make_model()
+    previous = AIMessage(
+        content=[{"type": "text", "text": "Hello", "id": "msg_123"}],
+        response_metadata={"id": "resp_local"},
+    )
+
+    payload = model._get_request_payload(
+        [HumanMessage(content="Hi"), previous, HumanMessage(content="Again?")],
+        previous_response_id="resp_external",
+    )
+
+    assert payload["previous_response_id"] == "resp_external"
+    assert payload["input"] == [
+        {"content": "Hi", "role": "user"},
+        {"type": "message", "content": [{"type": "output_text", "text": "Hello", "annotations": []}], "role": "assistant"},
+        {"content": "Again?", "role": "user"},
+    ]
+
+
+def test_request_payload_missing_store_does_not_auto_use_previous_response_id():
+    model = _make_model()
+    previous = AIMessage(
+        content=[{"type": "text", "text": "Hello", "id": "msg_123"}],
+        response_metadata={"id": "resp_123"},
+    )
+
+    payload = model._get_request_payload([HumanMessage(content="Hi"), previous, HumanMessage(content="Again?")])
+
+    assert "previous_response_id" not in payload
+    assert payload["input"] == [
+        {"content": "Hi", "role": "user"},
+        {"type": "message", "content": [{"type": "output_text", "text": "Hello", "annotations": []}], "role": "assistant"},
+        {"content": "Again?", "role": "user"},
+    ]
+
+
+def test_request_payload_falls_back_to_full_replay_when_previous_response_was_not_stored():
+    model = _make_model()
+    previous = AIMessage(
+        content=[
+            {
+                "type": "function_call",
+                "name": "echo",
+                "arguments": '{"text":"hi"}',
+                "call_id": "call_123",
+                "id": "fc_123",
+                "status": "completed",
+            }
+        ],
+        tool_calls=[{"name": "echo", "args": {"text": "hi"}, "id": "call_123", "type": "tool_call"}],
+        response_metadata={"id": "resp_123", "store": False},
+    )
+    tool_result = ToolMessage(content="hi", tool_call_id="call_123", name="echo")
+
+    payload = model._get_request_payload([HumanMessage(content="Again?"), previous, tool_result])
+
+    assert payload["store"] is True
+    assert "previous_response_id" not in payload
+    assert payload["input"] == [
+        {"content": "Again?", "role": "user"},
+        {
+            "arguments": '{"text":"hi"}',
+            "call_id": "call_123",
+            "name": "echo",
+            "type": "function_call",
+            "status": "completed",
+        },
+        {"type": "function_call_output", "output": "hi", "call_id": "call_123"},
+    ]
+
+
+def test_use_previous_response_id_true_can_force_stateful_follow_up_on_unstored_response():
+    model = _make_model()
+    previous = AIMessage(
+        content=[{"type": "text", "text": "Hello", "id": "msg_123"}],
+        response_metadata={"id": "resp_123", "store": False},
+    )
+
+    payload = model._get_request_payload(
+        [HumanMessage(content="Hi"), previous, HumanMessage(content="Again?")],
+        use_previous_response_id=True,
+    )
+
     assert payload["previous_response_id"] == "resp_123"
     assert payload["input"] == [{"content": "Again?", "role": "user"}]
 

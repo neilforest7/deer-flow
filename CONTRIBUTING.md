@@ -43,10 +43,13 @@ Docker provides a consistent, isolated environment with all dependencies pre-con
    ```
    `make docker-start` reads `config.yaml` and starts `provisioner` only for provisioner/Kubernetes sandbox mode.
 
-   All services will start with hot-reload enabled:
+   Frontend and Gateway start with hot-reload enabled. LangGraph intentionally runs without auto-reload in dev because the upstream CLI persists runtime metadata under `.langgraph_api/`, which otherwise creates self-triggered reload loops and stale busy runs.
+   The startup wrapper also cancels `running`/`pending` runs left behind by an older LangGraph process so reopening a thread does not get stuck reconnecting.
+
+   Development behavior:
    - Frontend changes are automatically reloaded
    - Backend changes trigger automatic restart
-   - LangGraph server supports hot-reload
+   - LangGraph server restarts only when you restart the stack
 
 4. **Access the application**:
    - Web Interface: http://localhost:2026

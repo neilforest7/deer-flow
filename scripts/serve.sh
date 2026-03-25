@@ -55,7 +55,7 @@ echo "  Starting DeerFlow Development Server"
 echo "=========================================="
 echo ""
 if $DEV_MODE; then
-    echo "  Mode: DEV  (hot-reload enabled)"
+    echo "  Mode: DEV  (frontend/gateway hot-reload enabled)"
     echo "  Tip:  run \`make start\` in production mode"
 else
     echo "  Mode: PROD (hot-reload disabled)"
@@ -121,10 +121,8 @@ trap cleanup INT TERM
 mkdir -p logs
 
 if $DEV_MODE; then
-    LANGGRAPH_EXTRA_FLAGS=""
     GATEWAY_EXTRA_FLAGS="--reload --reload-include='*.yaml' --reload-include='.env'"
 else
-    LANGGRAPH_EXTRA_FLAGS="--no-reload"
     GATEWAY_EXTRA_FLAGS=""
 fi
 
@@ -132,7 +130,8 @@ echo "Starting LangGraph server..."
 # Read log_level from config.yaml, fallback to env var, then to "info"
 CONFIG_LOG_LEVEL=$(grep -m1 '^log_level:' config.yaml 2>/dev/null | awk '{print $2}' | tr -d ' ')
 LANGGRAPH_LOG_LEVEL="${LANGGRAPH_LOG_LEVEL:-${CONFIG_LOG_LEVEL:-info}}"
-(cd backend && NO_COLOR=1 uv run langgraph dev --no-browser --allow-blocking --server-log-level $LANGGRAPH_LOG_LEVEL $LANGGRAPH_EXTRA_FLAGS > ../logs/langgraph.log 2>&1) &
+LANGGRAPH_RUNNER="sh ./scripts/run_langgraph_dev.sh --server-log-level $LANGGRAPH_LOG_LEVEL"
+(cd backend && NO_COLOR=1 $LANGGRAPH_RUNNER > ../logs/langgraph.log 2>&1) &
 ./scripts/wait-for-port.sh 2024 60 "LangGraph" || {
     echo "  See logs/langgraph.log for details"
     tail -20 logs/langgraph.log

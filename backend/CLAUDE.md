@@ -185,6 +185,9 @@ Configuration priority:
 3. `config.yaml` in current directory (backend/)
 4. `config.yaml` in parent directory (project root - **recommended location**)
 
+Docker dev compose exports `DEER_FLOW_CONFIG_PATH=/app/config.yaml` for both Gateway and LangGraph so container restarts and alternate working directories do not break config discovery.
+Docker/local startup routes LangGraph through `backend/scripts/run_langgraph_dev.sh`, which launches `langgraph dev --no-reload`, paginates through all `busy` threads, scans each thread's run history, and cancels stale `running` runs created before the current process boot time.
+
 Config values starting with `$` are resolved as environment variables (e.g., `$OPENAI_API_KEY`).
 `ModelConfig` also declares `use_responses_api` and `output_version` so OpenAI `/v1/responses` can be enabled explicitly while still using `langchain_openai:ChatOpenAI`.
 For custom or self-hosted `/v1/responses` endpoints that are not fully compatible with LangChain's streaming expectations, use `deerflow.models.patched_responses_openai:PatchedResponsesOpenAI` from the harness layer instead of modifying LangChain or importing app code. The adapter exists specifically to normalize streamed tool-call fragments and reasoning summaries while preserving the harness/app boundary.
@@ -216,7 +219,7 @@ FastAPI application on port 8001 with health check at `GET /health`.
 | **Artifacts** (`/api/threads/{id}/artifacts`) | `GET /{path}` - serve artifacts; `?download=true` for file download |
 | **Suggestions** (`/api/threads/{id}/suggestions`) | `POST /` - generate follow-up questions; rich list/block model content is normalized before JSON parsing |
 
-Proxied through nginx: `/api/langgraph/*` → LangGraph, all other `/api/*` → Gateway.
+Proxied through nginx: `/api/langgraph/*` → LangGraph, all other `/api/*` → Gateway. Docker nginx uses request-time DNS resolution for `gateway`, `langgraph`, and `frontend` service names so container recreation does not leave nginx pinned to stale Docker IPs.
 Frontend artifact UX treats transient `write_file` / `str_replace` tool output as manual code-only scratch content; only real thread artifacts should auto-preview/render as final files.
 
 ### Sandbox System (`packages/harness/deerflow/sandbox/`)

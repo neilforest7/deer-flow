@@ -11,6 +11,7 @@ DeerFlow-specific integration issues we observed on custom Responses endpoints:
 from __future__ import annotations
 
 import json
+import logging
 from collections.abc import AsyncIterator, Iterator
 from json import JSONDecodeError
 from typing import Any
@@ -19,7 +20,28 @@ from langchain_core.callbacks import AsyncCallbackManagerForLLMRun, CallbackMana
 from langchain_core.messages import AIMessage, AIMessageChunk
 from langchain_core.outputs import ChatGeneration, ChatGenerationChunk, ChatResult
 from langchain_openai import ChatOpenAI
-from langchain_openai.chat_models.base import _convert_responses_chunk_to_generation_chunk
+from langchain_openai.chat_models.base import (
+    _construct_responses_api_payload,
+    _convert_responses_chunk_to_generation_chunk,
+)
+
+logger = logging.getLogger(__name__)
+
+_REASONING_ENCRYPTED_CONTENT_INCLUDE = "reasoning.encrypted_content"
+_RESPONSES_OUTPUT_ITEM_TYPES = {
+    "code_interpreter_call",
+    "computer_call",
+    "custom_tool_call",
+    "file_search_call",
+    "function_call",
+    "image_generation_call",
+    "mcp_approval_request",
+    "mcp_call",
+    "mcp_list_tools",
+    "message",
+    "reasoning",
+    "web_search_call",
+}
 
 
 def _content_blocks(content: Any) -> list[dict[str, Any]]:
@@ -41,14 +63,22 @@ def _extract_reasoning_summary_text(content: Any) -> str | None:
         summary = block.get("summary")
         if not isinstance(summary, list):
             continue
+        summary_parts: list[str] = []
         for item in summary:
             if not isinstance(item, dict) or item.get("type") != "summary_text":
                 continue
             text = item.get("text")
-            if isinstance(text, str) and text.strip():
-                reasoning_parts.append(text.strip())
+            if isinstance(text, str) and text:
+                summary_parts.append(text)
 
-    return "\n\n".join(reasoning_parts) if reasoning_parts else None
+        if summary_parts:
+            reasoning_parts.append("\n\n".join(summary_parts))
+
+    if not reasoning_parts:
+        return None
+
+    reasoning_summary = "\n\n".join(reasoning_parts).strip()
+    return reasoning_summary or None
 
 
 def _normalize_ai_message(message: AIMessage | AIMessageChunk) -> AIMessage | AIMessageChunk:
@@ -67,6 +97,75 @@ def _normalize_ai_message(message: AIMessage | AIMessageChunk) -> AIMessage | AI
         additional_kwargs["reasoning_content"] = reasoning_summary
 
     return message.model_copy(update={"additional_kwargs": additional_kwargs})
+
+
+def _ensure_reasoning_encrypted_content_include(payload: dict[str, Any]) -> None:
+    include = payload.get("include")
+    if include is None:
+        payload["include"] = [_REASONING_ENCRYPTED_CONTENT_INCLUDE]
+        return
+
+    include_values = list(include)
+    if _REASONING_ENCRYPTED_CONTENT_INCLUDE not in include_values:
+        include_values.append(_REASONING_ENCRYPTED_CONTENT_INCLUDE)
+    payload["include"] = include_values
+
+
+def _should_auto_use_previous_response_id(
+    use_previous_response_id: bool | None,
+    store: bool,
+) -> bool:
+    return store is not False and use_previous_response_id is not False
+
+
+def _get_last_messages_for_custom_responses(
+    messages: list[Any],
+) -> tuple[list[Any], str | None]:
+    for i in range(len(messages) - 1, -1, -1):
+        msg = messages[i]
+        if not isinstance(msg, AIMessage):
+            continue
+        response_id = msg.response_metadata.get("id")
+        if isinstance(response_id, str) and response_id.strip():
+            return list(messages[i + 1 :]), response_id
+
+    return list(messages), None
+
+
+def _is_replayed_responses_output_item(item: dict[str, Any]) -> bool:
+    item_type = item.get("type")
+    if item_type not in _RESPONSES_OUTPUT_ITEM_TYPES:
+        return False
+    if item_type == "message":
+        return item.get("role") == "assistant"
+    return True
+
+
+def _sanitize_responses_input(
+    input_items: list[Any],
+) -> tuple[list[Any], bool, bool]:
+    sanitized_input: list[Any] = []
+    has_reasoning = False
+    has_encrypted_reasoning = False
+
+    for item in input_items:
+        if not isinstance(item, dict):
+            sanitized_input.append(item)
+            continue
+
+        sanitized_item = dict(item)
+        if _is_replayed_responses_output_item(sanitized_item):
+            sanitized_item.pop("id", None)
+
+        if sanitized_item.get("type") == "reasoning":
+            has_reasoning = True
+            encrypted_content = sanitized_item.get("encrypted_content")
+            if isinstance(encrypted_content, str) and encrypted_content:
+                has_encrypted_reasoning = True
+
+        sanitized_input.append(sanitized_item)
+
+    return sanitized_input, has_reasoning, has_encrypted_reasoning
 
 
 def _should_suppress_partial_tool_call_chunk(message: AIMessageChunk) -> bool:
@@ -111,11 +210,54 @@ def _normalize_generation_chunk(chunk: ChatGenerationChunk) -> ChatGenerationChu
     if isinstance(message, AIMessageChunk) and _should_suppress_partial_tool_call_chunk(message):
         return None
 
+    if isinstance(message, AIMessageChunk) and getattr(message, "chunk_position", None) != "last":
+        reasoning_fragment = _extract_reasoning_stream_fragment(message.content)
+        if reasoning_fragment is None:
+            return chunk
+
+        additional_kwargs = dict(message.additional_kwargs)
+        existing = additional_kwargs.get("reasoning_content")
+        if isinstance(existing, str):
+            additional_kwargs["reasoning_content"] = f"{existing}{reasoning_fragment}"
+        else:
+            additional_kwargs["reasoning_content"] = reasoning_fragment
+
+        normalized_message = message.model_copy(update={"additional_kwargs": additional_kwargs})
+        return ChatGenerationChunk(message=normalized_message, generation_info=chunk.generation_info)
+
     normalized_message = _normalize_ai_message(message)
     if normalized_message is message:
         return chunk
 
     return ChatGenerationChunk(message=normalized_message, generation_info=chunk.generation_info)
+
+
+def _extract_reasoning_stream_fragment(content: Any) -> str | None:
+    fragments: list[str] = []
+
+    for block in _content_blocks(content):
+        if block.get("type") != "reasoning":
+            continue
+        summary = block.get("summary")
+        if not isinstance(summary, list):
+            continue
+
+        for item in summary:
+            if not isinstance(item, dict) or item.get("type") != "summary_text":
+                continue
+
+            text = item.get("text")
+            summary_index = item.get("index")
+            if text == "":
+                if isinstance(summary_index, int) and summary_index > 0:
+                    fragments.append("\n\n")
+                continue
+            if isinstance(text, str):
+                fragments.append(text)
+
+    if not fragments:
+        return None
+    return "".join(fragments)
 
 
 def _normalize_chat_result(result: ChatResult) -> ChatResult:
@@ -170,6 +312,58 @@ class PatchedResponsesOpenAI(ChatOpenAI):
     """ChatOpenAI adapter specialized for custom Responses endpoints."""
 
     use_responses_api: bool | None = True
+    use_previous_response_id: bool | None = None
+
+    def _get_request_payload(
+        self,
+        input_: Any,
+        *,
+        stop: list[str] | None = None,
+        **kwargs: Any,
+    ) -> dict[str, Any]:
+        invocation_kwargs = dict(kwargs)
+        if stop is not None:
+            invocation_kwargs["stop"] = stop
+
+        if not self._use_responses_api({**self._default_params, **invocation_kwargs}):
+            return super()._get_request_payload(input_, stop=stop, **kwargs)
+
+        messages = self._convert_input(input_).to_messages()
+        use_previous_response_id = invocation_kwargs.pop(
+            "use_previous_response_id",
+            self.use_previous_response_id,
+        )
+        payload = {**self._default_params, **invocation_kwargs}
+        store = payload.get("store")
+        if store is None:
+            payload["store"] = True
+            store = True
+
+        explicit_previous_response_id = payload.get("previous_response_id")
+        if explicit_previous_response_id:
+            payload_to_use, _ = _get_last_messages_for_custom_responses(messages)
+            if not payload_to_use:
+                payload_to_use = messages
+        elif _should_auto_use_previous_response_id(use_previous_response_id, store):
+            last_messages, previous_response_id = _get_last_messages_for_custom_responses(messages)
+            payload_to_use = last_messages if previous_response_id else messages
+            if previous_response_id:
+                payload["previous_response_id"] = previous_response_id
+        else:
+            payload_to_use = messages
+
+        payload = _construct_responses_api_payload(payload_to_use, payload)
+
+        if store is False and payload.get("reasoning") is not None:
+            _ensure_reasoning_encrypted_content_include(payload)
+
+        if payload.get("previous_response_id") is None:
+            sanitized_input, has_reasoning, has_encrypted_reasoning = _sanitize_responses_input(payload.get("input", []))
+            payload["input"] = sanitized_input
+            if has_reasoning and not has_encrypted_reasoning:
+                logger.warning("Responses replay is sending reasoning items without encrypted_content; multi-turn reasoning continuity may degrade.")
+
+        return payload
 
     def _stream(self, *args: Any, **kwargs: Any) -> Iterator[ChatGenerationChunk]:
         if self._use_responses_api({**kwargs, **self.model_kwargs}):
@@ -230,6 +424,7 @@ class PatchedResponsesOpenAI(ChatOpenAI):
             current_output_index = -1
             current_sub_index = -1
             has_reasoning = False
+            emitted_stream_reasoning_content = False
             pending_tool_calls: dict[int, dict[str, Any]] = {}
             for raw_chunk in response:
                 chunk_type = _get_value(raw_chunk, "type")
@@ -310,9 +505,19 @@ class PatchedResponsesOpenAI(ChatOpenAI):
                 if normalized_chunk is None:
                     continue
 
+                if emitted_stream_reasoning_content and getattr(normalized_chunk.message, "chunk_position", None) == "last":
+                    additional_kwargs = dict(normalized_chunk.message.additional_kwargs)
+                    additional_kwargs.pop("reasoning_content", None)
+                    normalized_chunk = ChatGenerationChunk(
+                        message=normalized_chunk.message.model_copy(update={"additional_kwargs": additional_kwargs}),
+                        generation_info=normalized_chunk.generation_info,
+                    )
+
                 if run_manager:
                     run_manager.on_llm_new_token(normalized_chunk.text, chunk=normalized_chunk)
                 is_first_chunk = False
+                if "reasoning_content" in normalized_chunk.message.additional_kwargs and getattr(normalized_chunk.message, "chunk_position", None) != "last":
+                    emitted_stream_reasoning_content = True
                 if "reasoning_content" in normalized_chunk.message.additional_kwargs or "reasoning" in normalized_chunk.message.additional_kwargs:
                     has_reasoning = True
                 yield normalized_chunk
@@ -341,6 +546,7 @@ class PatchedResponsesOpenAI(ChatOpenAI):
             current_output_index = -1
             current_sub_index = -1
             has_reasoning = False
+            emitted_stream_reasoning_content = False
             pending_tool_calls: dict[int, dict[str, Any]] = {}
             async for raw_chunk in response:
                 chunk_type = _get_value(raw_chunk, "type")
@@ -421,9 +627,19 @@ class PatchedResponsesOpenAI(ChatOpenAI):
                 if normalized_chunk is None:
                     continue
 
+                if emitted_stream_reasoning_content and getattr(normalized_chunk.message, "chunk_position", None) == "last":
+                    additional_kwargs = dict(normalized_chunk.message.additional_kwargs)
+                    additional_kwargs.pop("reasoning_content", None)
+                    normalized_chunk = ChatGenerationChunk(
+                        message=normalized_chunk.message.model_copy(update={"additional_kwargs": additional_kwargs}),
+                        generation_info=normalized_chunk.generation_info,
+                    )
+
                 if run_manager:
                     await run_manager.on_llm_new_token(normalized_chunk.text, chunk=normalized_chunk)
                 is_first_chunk = False
+                if "reasoning_content" in normalized_chunk.message.additional_kwargs and getattr(normalized_chunk.message, "chunk_position", None) != "last":
+                    emitted_stream_reasoning_content = True
                 if "reasoning_content" in normalized_chunk.message.additional_kwargs or "reasoning" in normalized_chunk.message.additional_kwargs:
                     has_reasoning = True
                 yield normalized_chunk

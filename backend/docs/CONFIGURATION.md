@@ -89,10 +89,33 @@ models:
     model: gpt-5.4
     api_key: $CUSTOM_OPENAI_API_KEY
     base_url: http://your-gateway/v1
+    store: true
+    use_previous_response_id: true
     output_version: responses/v1
 ```
 
 `PatchedResponsesOpenAI` keeps LangChain's OpenAI transport but normalizes streamed tool-call events and reasoning summaries for custom endpoints that do not exactly match OpenAI's Responses streaming behavior.
+
+It defaults to stateful Responses behavior for custom gateways:
+
+- `store: true` is sent unless you override it
+- `use_previous_response_id` is enabled automatically when persistence is available
+
+If you need stateless replay, set `store: false` explicitly:
+
+```yaml
+models:
+  - name: custom-gpt-5.4-stateless
+    display_name: GPT-5.4 (Custom Responses Stateless)
+    use: deerflow.models.patched_responses_openai:PatchedResponsesOpenAI
+    model: gpt-5.4
+    api_key: $CUSTOM_OPENAI_API_KEY
+    base_url: http://your-gateway/v1
+    store: false
+    output_version: responses/v1
+```
+
+When `store: false` is used, the adapter strips replayed output item IDs before sending the next turn. If reasoning is enabled, it also requests `reasoning.encrypted_content` automatically to preserve multi-turn reasoning continuity as much as the gateway allows.
 
 For OpenAI-compatible gateways (for example Novita or OpenRouter), keep using `langchain_openai:ChatOpenAI` and set `base_url`:
 

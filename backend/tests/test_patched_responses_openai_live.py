@@ -92,3 +92,28 @@ def test_reasoning_multi_turn_stays_stable():
 
     text_blocks = [part["text"] for part in second.content if isinstance(part, dict) and part.get("type") == "text"]
     assert text_blocks
+
+
+def test_stateless_reasoning_effort_multi_turn_stays_stable():
+    reasoning_model = PatchedResponsesOpenAI(
+        model=MODEL,
+        api_key=API_KEY,
+        base_url=BASE_URL,
+        output_version="responses/v1",
+        timeout=30.0,
+        max_retries=0,
+        store=False,
+        reasoning_effort="low",
+    )
+
+    first = reasoning_model.invoke([HumanMessage(content="Think briefly and answer in one word: circle or square?")])
+    second = reasoning_model.invoke(
+        [
+            HumanMessage(content="Think briefly and answer in one word: circle or square?"),
+            first,
+            HumanMessage(content="Repeat your answer in uppercase only."),
+        ]
+    )
+
+    text_blocks = [part["text"] for part in second.content if isinstance(part, dict) and part.get("type") == "text"]
+    assert text_blocks

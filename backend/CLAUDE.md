@@ -96,6 +96,8 @@ make format     # Format code with ruff
 Regression tests related to Docker/provisioner behavior:
 - `tests/test_docker_sandbox_mode_detection.py` (mode detection from `config.yaml`)
 - `tests/test_provisioner_kubeconfig.py` (kubeconfig file/directory handling)
+- `tests/test_aio_sandbox_provider.py` (stale sandbox adoption / recreation coverage)
+- `tests/test_sandbox_tools_retry.py` (one-shot sandbox transport retry for file tools)
 - `tests/test_patched_responses_openai.py` (unit coverage for the custom Responses adapter)
 - `tests/test_patched_responses_openai_live.py` (opt-in live contract tests for custom `/v1/responses` endpoints via `DEERFLOW_RESPONSES_TEST_*`)
 
@@ -215,14 +217,17 @@ FastAPI application on port 8001 with health check at `GET /health`.
 | **Suggestions** (`/api/threads/{id}/suggestions`) | `POST /` - generate follow-up questions; rich list/block model content is normalized before JSON parsing |
 
 Proxied through nginx: `/api/langgraph/*` → LangGraph, all other `/api/*` → Gateway.
+Frontend artifact UX treats transient `write_file` / `str_replace` tool output as manual code-only scratch content; only real thread artifacts should auto-preview/render as final files.
 
 ### Sandbox System (`packages/harness/deerflow/sandbox/`)
 
 **Interface**: Abstract `Sandbox` with `execute_command`, `read_file`, `write_file`, `list_dir`
-**Provider Pattern**: `SandboxProvider` with `acquire`, `get`, `release` lifecycle
+**Provider Pattern**: `SandboxProvider` with `acquire`, `get`, `release`, `destroy` lifecycle
 **Implementations**:
 - `LocalSandboxProvider` - Singleton local filesystem execution with path mappings
 - `AioSandboxProvider` (`packages/harness/deerflow/community/`) - Docker-based isolation
+- `AioSandboxProvider` validates warm-pool / discovered sandboxes with both a readiness probe and backend liveness check before reusing them, and destroys stale endpoints before recreating
+- `AioSandbox` raises `SandboxTransportError` for HTTP transport failures so sandbox tools can destroy + reacquire once instead of surfacing stale `Connection refused` errors directly to the model
 
 **Virtual Path System**:
 - Agent sees: `/mnt/user-data/{workspace,uploads,outputs}`, `/mnt/skills`
@@ -236,6 +241,7 @@ Proxied through nginx: `/api/langgraph/*` → LangGraph, all other `/api/*` → 
 - `read_file` - Read file contents with optional line range
 - `write_file` - Write/append to files, creates directories
 - `str_replace` - Substring replacement (single or all occurrences)
+- `bash`, `ls`, `read_file`, `write_file`, and `str_replace` perform a one-shot sandbox recreation retry on `SandboxTransportError`; a second transport failure surfaces immediately instead of looping, and append writes assume the failed transport did not commit before retry
 
 ### Subagent System (`packages/harness/deerflow/subagents/`)
 

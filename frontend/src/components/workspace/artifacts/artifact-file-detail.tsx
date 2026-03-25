@@ -81,8 +81,11 @@ export function ArtifactFileDetail({
     return checkCodeFile(filepath);
   }, [filepath, isWriteFile, isSkillFile]);
   const isSupportPreview = useMemo(() => {
+    if (isWriteFile) {
+      return false;
+    }
     return language === "html" || language === "markdown";
-  }, [language]);
+  }, [isWriteFile, language]);
   const { content } = useArtifactContent({
     threadId,
     filepath: filepathFromProps,

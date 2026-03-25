@@ -3,6 +3,7 @@ import logging
 
 from agent_sandbox import Sandbox as AioSandboxClient
 
+from deerflow.sandbox.exceptions import SandboxTransportError
 from deerflow.sandbox.sandbox import Sandbox
 
 logger = logging.getLogger(__name__)
@@ -31,12 +32,23 @@ class AioSandbox(Sandbox):
     def base_url(self) -> str:
         return self._base_url
 
+    def _raise_transport_error(self, operation: str, exc: Exception) -> None:
+        logger.error("Sandbox transport failed during %s against %s: %s", operation, self._base_url, exc)
+        raise SandboxTransportError(
+            f"Sandbox transport failed during {operation}: {exc}",
+            operation=operation,
+            sandbox_url=self._base_url,
+        ) from exc
+
     @property
     def home_dir(self) -> str:
         """Get the home directory inside the sandbox."""
         if self._home_dir is None:
-            context = self._client.sandbox.get_context()
-            self._home_dir = context.home_dir
+            try:
+                context = self._client.sandbox.get_context()
+                self._home_dir = context.home_dir
+            except Exception as exc:
+                self._raise_transport_error("get_context", exc)
         return self._home_dir
 
     def execute_command(self, command: str) -> str:
@@ -52,9 +64,8 @@ class AioSandbox(Sandbox):
             result = self._client.shell.exec_command(command=command)
             output = result.data.output if result.data else ""
             return output if output else "(no output)"
-        except Exception as e:
-            logger.error(f"Failed to execute command in sandbox: {e}")
-            return f"Error: {e}"
+        except Exception as exc:
+            self._raise_transport_error("execute_command", exc)
 
     def read_file(self, path: str) -> str:
         """Read the content of a file in the sandbox.
@@ -68,9 +79,8 @@ class AioSandbox(Sandbox):
         try:
             result = self._client.file.read_file(file=path)
             return result.data.content if result.data else ""
-        except Exception as e:
-            logger.error(f"Failed to read file in sandbox: {e}")
-            return f"Error: {e}"
+        except Exception as exc:
+            self._raise_transport_error("read_file", exc)
 
     def list_dir(self, path: str, max_depth: int = 2) -> list[str]:
         """List the contents of a directory in the sandbox.
@@ -90,9 +100,8 @@ class AioSandbox(Sandbox):
             if output:
                 return [line.strip() for line in output.strip().split("\n") if line.strip()]
             return []
-        except Exception as e:
-            logger.error(f"Failed to list directory in sandbox: {e}")
-            return []
+        except Exception as exc:
+            self._raise_transport_error("list_dir", exc)
 
     def write_file(self, path: str, content: str, append: bool = False) -> None:
         """Write content to a file in the sandbox.
@@ -106,12 +115,10 @@ class AioSandbox(Sandbox):
             if append:
                 # Read existing content first and append
                 existing = self.read_file(path)
-                if not existing.startswith("Error:"):
-                    content = existing + content
+                content = existing + content
             self._client.file.write_file(file=path, content=content)
-        except Exception as e:
-            logger.error(f"Failed to write file in sandbox: {e}")
-            raise
+        except Exception as exc:
+            self._raise_transport_error("write_file", exc)
 
     def update_file(self, path: str, content: bytes) -> None:
         """Update a file with binary content in the sandbox.
@@ -123,6 +130,5 @@ class AioSandbox(Sandbox):
         try:
             base64_content = base64.b64encode(content).decode("utf-8")
             self._client.file.write_file(file=path, content=base64_content, encoding="base64")
-        except Exception as e:
-            logger.error(f"Failed to update file in sandbox: {e}")
-            raise
+        except Exception as exc:
+            self._raise_transport_error("update_file", exc)

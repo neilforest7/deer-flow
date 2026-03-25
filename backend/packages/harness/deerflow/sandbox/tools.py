@@ -1,3 +1,4 @@
+import logging
 import re
 from pathlib import Path
 
@@ -10,6 +11,7 @@ from deerflow.sandbox.exceptions import (
     SandboxError,
     SandboxNotFoundError,
     SandboxRuntimeError,
+    SandboxTransportError,
 )
 from deerflow.sandbox.sandbox import Sandbox
 from deerflow.sandbox.sandbox_provider import get_sandbox_provider
@@ -25,6 +27,8 @@ _LOCAL_BASH_SYSTEM_PATH_PREFIXES = (
 )
 
 _DEFAULT_SKILLS_CONTAINER_PATH = "/mnt/skills"
+
+logger = logging.getLogger(__name__)
 
 
 def _get_skills_container_path() -> str:
@@ -118,6 +122,46 @@ def _sanitize_error(error: Exception, runtime: "ToolRuntime[ContextT, ThreadStat
         thread_data = get_thread_data(runtime)
         msg = mask_local_paths_in_output(msg, thread_data)
     return msg
+
+
+def _current_sandbox_id(runtime: "ToolRuntime[ContextT, ThreadState] | None") -> str | None:
+    if runtime is None or runtime.state is None:
+        return None
+    sandbox_state = runtime.state.get("sandbox")
+    if sandbox_state is None:
+        return None
+    sandbox_id = sandbox_state.get("sandbox_id")
+    return sandbox_id if isinstance(sandbox_id, str) else None
+
+
+def _destroy_sandbox_for_retry(runtime: "ToolRuntime[ContextT, ThreadState] | None", sandbox_id: str) -> None:
+    provider = get_sandbox_provider()
+    provider.destroy(sandbox_id)
+    if runtime is not None:
+        runtime.context.pop("sandbox_id", None)
+        if runtime.state is not None:
+            runtime.state.pop("sandbox", None)
+
+
+def _run_with_transport_retry(
+    runtime: "ToolRuntime[ContextT, ThreadState] | None",
+    operation_name: str,
+    callback,
+):
+    try:
+        return callback()
+    except SandboxTransportError as exc:
+        sandbox_id = _current_sandbox_id(runtime)
+        if sandbox_id is None:
+            raise
+        logger.warning(
+            "Retrying sandbox operation %s after transport failure on sandbox %s: %s",
+            operation_name,
+            sandbox_id,
+            exc,
+        )
+        _destroy_sandbox_for_retry(runtime, sandbox_id)
+        return callback()
 
 
 def replace_virtual_path(path: str, thread_data: ThreadDataState | None) -> str:
@@ -552,16 +596,19 @@ def bash_tool(runtime: ToolRuntime[ContextT, ThreadState], description: str, com
         description: Explain why you are running this command in short words. ALWAYS PROVIDE THIS PARAMETER FIRST.
         command: The bash command to execute. Always use absolute paths for files and directories.
     """
-    try:
+    def run_operation() -> str:
         sandbox = ensure_sandbox_initialized(runtime)
         ensure_thread_directories_exist(runtime)
         thread_data = get_thread_data(runtime)
         if is_local_sandbox(runtime):
             validate_local_bash_command_paths(command, thread_data)
-            command = replace_virtual_paths_in_command(command, thread_data)
-            output = sandbox.execute_command(command)
+            resolved_command = replace_virtual_paths_in_command(command, thread_data)
+            output = sandbox.execute_command(resolved_command)
             return mask_local_paths_in_output(output, thread_data)
         return sandbox.execute_command(command)
+
+    try:
+        return _run_with_transport_retry(runtime, "bash", run_operation)
     except SandboxError as e:
         return f"Error: {e}"
     except PermissionError as e:
@@ -579,20 +626,25 @@ def ls_tool(runtime: ToolRuntime[ContextT, ThreadState], description: str, path:
         path: The **absolute** path to the directory to list.
     """
     try:
-        sandbox = ensure_sandbox_initialized(runtime)
-        ensure_thread_directories_exist(runtime)
         requested_path = path
-        if is_local_sandbox(runtime):
-            thread_data = get_thread_data(runtime)
-            validate_local_tool_path(path, thread_data, read_only=True)
-            if _is_skills_path(path):
-                path = _resolve_skills_path(path)
-            else:
-                path = _resolve_and_validate_user_data_path(path, thread_data)
-        children = sandbox.list_dir(path)
-        if not children:
-            return "(empty)"
-        return "\n".join(children)
+
+        def run_operation() -> str:
+            sandbox = ensure_sandbox_initialized(runtime)
+            ensure_thread_directories_exist(runtime)
+            resolved_path = requested_path
+            if is_local_sandbox(runtime):
+                thread_data = get_thread_data(runtime)
+                validate_local_tool_path(resolved_path, thread_data, read_only=True)
+                if _is_skills_path(resolved_path):
+                    resolved_path = _resolve_skills_path(resolved_path)
+                else:
+                    resolved_path = _resolve_and_validate_user_data_path(resolved_path, thread_data)
+            children = sandbox.list_dir(resolved_path)
+            if not children:
+                return "(empty)"
+            return "\n".join(children)
+
+        return _run_with_transport_retry(runtime, "ls", run_operation)
     except SandboxError as e:
         return f"Error: {e}"
     except FileNotFoundError:
@@ -620,22 +672,27 @@ def read_file_tool(
         end_line: Optional ending line number (1-indexed, inclusive). Use with start_line to read a specific range.
     """
     try:
-        sandbox = ensure_sandbox_initialized(runtime)
-        ensure_thread_directories_exist(runtime)
         requested_path = path
-        if is_local_sandbox(runtime):
-            thread_data = get_thread_data(runtime)
-            validate_local_tool_path(path, thread_data, read_only=True)
-            if _is_skills_path(path):
-                path = _resolve_skills_path(path)
-            else:
-                path = _resolve_and_validate_user_data_path(path, thread_data)
-        content = sandbox.read_file(path)
-        if not content:
-            return "(empty)"
-        if start_line is not None and end_line is not None:
-            content = "\n".join(content.splitlines()[start_line - 1 : end_line])
-        return content
+
+        def run_operation() -> str:
+            sandbox = ensure_sandbox_initialized(runtime)
+            ensure_thread_directories_exist(runtime)
+            resolved_path = requested_path
+            if is_local_sandbox(runtime):
+                thread_data = get_thread_data(runtime)
+                validate_local_tool_path(resolved_path, thread_data, read_only=True)
+                if _is_skills_path(resolved_path):
+                    resolved_path = _resolve_skills_path(resolved_path)
+                else:
+                    resolved_path = _resolve_and_validate_user_data_path(resolved_path, thread_data)
+            content = sandbox.read_file(resolved_path)
+            if not content:
+                return "(empty)"
+            if start_line is not None and end_line is not None:
+                content = "\n".join(content.splitlines()[start_line - 1 : end_line])
+            return content
+
+        return _run_with_transport_retry(runtime, "read_file", run_operation)
     except SandboxError as e:
         return f"Error: {e}"
     except FileNotFoundError:
@@ -664,15 +721,20 @@ def write_file_tool(
         content: The content to write to the file. ALWAYS PROVIDE THIS PARAMETER THIRD.
     """
     try:
-        sandbox = ensure_sandbox_initialized(runtime)
-        ensure_thread_directories_exist(runtime)
         requested_path = path
-        if is_local_sandbox(runtime):
-            thread_data = get_thread_data(runtime)
-            validate_local_tool_path(path, thread_data)
-            path = _resolve_and_validate_user_data_path(path, thread_data)
-        sandbox.write_file(path, content, append)
-        return "OK"
+
+        def run_operation() -> str:
+            sandbox = ensure_sandbox_initialized(runtime)
+            ensure_thread_directories_exist(runtime)
+            resolved_path = requested_path
+            if is_local_sandbox(runtime):
+                thread_data = get_thread_data(runtime)
+                validate_local_tool_path(resolved_path, thread_data)
+                resolved_path = _resolve_and_validate_user_data_path(resolved_path, thread_data)
+            sandbox.write_file(resolved_path, content, append)
+            return "OK"
+
+        return _run_with_transport_retry(runtime, "write_file", run_operation)
     except SandboxError as e:
         return f"Error: {e}"
     except PermissionError:
@@ -705,24 +767,29 @@ def str_replace_tool(
         replace_all: Whether to replace all occurrences of the substring. If False, only the first occurrence will be replaced. Default is False.
     """
     try:
-        sandbox = ensure_sandbox_initialized(runtime)
-        ensure_thread_directories_exist(runtime)
         requested_path = path
-        if is_local_sandbox(runtime):
-            thread_data = get_thread_data(runtime)
-            validate_local_tool_path(path, thread_data)
-            path = _resolve_and_validate_user_data_path(path, thread_data)
-        content = sandbox.read_file(path)
-        if not content:
+
+        def run_operation() -> str:
+            sandbox = ensure_sandbox_initialized(runtime)
+            ensure_thread_directories_exist(runtime)
+            resolved_path = requested_path
+            if is_local_sandbox(runtime):
+                thread_data = get_thread_data(runtime)
+                validate_local_tool_path(resolved_path, thread_data)
+                resolved_path = _resolve_and_validate_user_data_path(resolved_path, thread_data)
+            content = sandbox.read_file(resolved_path)
+            if not content:
+                return "OK"
+            if old_str not in content:
+                return f"Error: String to replace not found in file: {requested_path}"
+            if replace_all:
+                updated_content = content.replace(old_str, new_str)
+            else:
+                updated_content = content.replace(old_str, new_str, 1)
+            sandbox.write_file(resolved_path, updated_content)
             return "OK"
-        if old_str not in content:
-            return f"Error: String to replace not found in file: {requested_path}"
-        if replace_all:
-            content = content.replace(old_str, new_str)
-        else:
-            content = content.replace(old_str, new_str, 1)
-        sandbox.write_file(path, content)
-        return "OK"
+
+        return _run_with_transport_retry(runtime, "str_replace", run_operation)
     except SandboxError as e:
         return f"Error: {e}"
     except FileNotFoundError:

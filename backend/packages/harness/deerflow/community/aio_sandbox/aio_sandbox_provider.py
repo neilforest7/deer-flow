@@ -322,6 +322,56 @@ class AioSandboxProvider(SandboxProvider):
                 self._thread_locks[thread_id] = threading.Lock()
             return self._thread_locks[thread_id]
 
+    def _can_adopt_sandbox_info(self, info: SandboxInfo, *, source: str) -> bool:
+        """Validate an existing sandbox before reusing it."""
+        sandbox_id = info.sandbox_id
+        ready = wait_for_sandbox_ready(info.sandbox_url, timeout=10)
+        try:
+            alive = self._backend.is_alive(info)
+        except Exception as exc:
+            alive = False
+            logger.warning(
+                "Failed to verify liveness for %s sandbox %s at %s: %s",
+                source,
+                sandbox_id,
+                info.sandbox_url,
+                exc,
+            )
+        if ready and alive:
+            return True
+
+        logger.warning(
+            "Discarding stale %s sandbox %s at %s (ready=%s, alive=%s)",
+            source,
+            sandbox_id,
+            info.sandbox_url,
+            ready,
+            alive,
+        )
+        return False
+
+    def _adopt_sandbox_info(self, thread_id: str | None, info: SandboxInfo, *, source: str) -> str | None:
+        """Promote an existing sandbox into the active in-process cache."""
+        sandbox_id = info.sandbox_id
+        if not self._can_adopt_sandbox_info(info, source=source):
+            try:
+                self._backend.destroy(info)
+                logger.info("Destroyed stale %s sandbox %s", source, sandbox_id)
+            except Exception as exc:
+                logger.warning("Failed to destroy stale %s sandbox %s: %s", source, sandbox_id, exc)
+            return None
+
+        sandbox = AioSandbox(id=sandbox_id, base_url=info.sandbox_url)
+        with self._lock:
+            self._sandboxes[sandbox_id] = sandbox
+            self._sandbox_infos[sandbox_id] = info
+            self._last_activity[sandbox_id] = time.time()
+            if thread_id:
+                self._thread_sandboxes[thread_id] = sandbox_id
+
+        logger.info("Adopted %s sandbox %s for thread %s at %s", source, sandbox_id, thread_id, info.sandbox_url)
+        return sandbox_id
+
     # ── Core: acquire / get / release / shutdown ─────────────────────────
 
     def acquire(self, thread_id: str | None = None) -> str:
@@ -371,16 +421,14 @@ class AioSandboxProvider(SandboxProvider):
 
         # ── Layer 1.5: Warm pool (container still running, no cold-start) ──
         if thread_id:
+            warm_info: SandboxInfo | None = None
             with self._lock:
                 if sandbox_id in self._warm_pool:
-                    info, _ = self._warm_pool.pop(sandbox_id)
-                    sandbox = AioSandbox(id=sandbox_id, base_url=info.sandbox_url)
-                    self._sandboxes[sandbox_id] = sandbox
-                    self._sandbox_infos[sandbox_id] = info
-                    self._last_activity[sandbox_id] = time.time()
-                    self._thread_sandboxes[thread_id] = sandbox_id
-                    logger.info(f"Reclaimed warm-pool sandbox {sandbox_id} for thread {thread_id} at {info.sandbox_url}")
-                    return sandbox_id
+                    warm_info, _ = self._warm_pool.pop(sandbox_id)
+            if warm_info is not None:
+                adopted = self._adopt_sandbox_info(thread_id, warm_info, source="warm-pool")
+                if adopted is not None:
+                    return adopted
 
         # ── Layer 2: Backend discovery + create (protected by cross-process lock) ──
         # Use a file lock so that two processes racing to create the same sandbox
@@ -406,6 +454,7 @@ class AioSandboxProvider(SandboxProvider):
                 fcntl.flock(lock_file, fcntl.LOCK_EX)
                 # Re-check in-process caches under the file lock in case another
                 # thread in this process won the race while we were waiting.
+                warm_info: SandboxInfo | None = None
                 with self._lock:
                     if thread_id in self._thread_sandboxes:
                         existing_id = self._thread_sandboxes[thread_id]
@@ -414,26 +463,18 @@ class AioSandboxProvider(SandboxProvider):
                             self._last_activity[existing_id] = time.time()
                             return existing_id
                     if sandbox_id in self._warm_pool:
-                        info, _ = self._warm_pool.pop(sandbox_id)
-                        sandbox = AioSandbox(id=sandbox_id, base_url=info.sandbox_url)
-                        self._sandboxes[sandbox_id] = sandbox
-                        self._sandbox_infos[sandbox_id] = info
-                        self._last_activity[sandbox_id] = time.time()
-                        self._thread_sandboxes[thread_id] = sandbox_id
-                        logger.info(f"Reclaimed warm-pool sandbox {sandbox_id} for thread {thread_id} (post-lock check)")
-                        return sandbox_id
+                        warm_info, _ = self._warm_pool.pop(sandbox_id)
+                if warm_info is not None:
+                    adopted = self._adopt_sandbox_info(thread_id, warm_info, source="warm-pool post-lock")
+                    if adopted is not None:
+                        return adopted
 
                 # Backend discovery: another process may have created the container.
                 discovered = self._backend.discover(sandbox_id)
                 if discovered is not None:
-                    sandbox = AioSandbox(id=discovered.sandbox_id, base_url=discovered.sandbox_url)
-                    with self._lock:
-                        self._sandboxes[discovered.sandbox_id] = sandbox
-                        self._sandbox_infos[discovered.sandbox_id] = discovered
-                        self._last_activity[discovered.sandbox_id] = time.time()
-                        self._thread_sandboxes[thread_id] = discovered.sandbox_id
-                    logger.info(f"Discovered existing sandbox {discovered.sandbox_id} for thread {thread_id} at {discovered.sandbox_url}")
-                    return discovered.sandbox_id
+                    adopted = self._adopt_sandbox_info(thread_id, discovered, source="discovered")
+                    if adopted is not None:
+                        return adopted
 
                 return self._create_sandbox(thread_id, sandbox_id)
             finally:

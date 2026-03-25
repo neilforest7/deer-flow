@@ -31,6 +31,20 @@ class SandboxRuntimeError(SandboxError):
     pass
 
 
+class SandboxTransportError(SandboxError):
+    """Raised when the sandbox transport is reachable in theory but fails in practice."""
+
+    def __init__(self, message: str, *, operation: str | None = None, sandbox_url: str | None = None):
+        details = {}
+        if operation:
+            details["operation"] = operation
+        if sandbox_url:
+            details["sandbox_url"] = sandbox_url
+        super().__init__(message, details)
+        self.operation = operation
+        self.sandbox_url = sandbox_url
+
+
 class SandboxCommandError(SandboxError):
     """Raised when a command execution fails in the sandbox."""
 

@@ -26,3 +26,8 @@ class LocalSandboxProvider(SandboxProvider):
         # For Docker-based providers (e.g., AioSandboxProvider), cleanup
         # happens at application shutdown via the shutdown() method.
         pass
+
+    def destroy(self, sandbox_id: str) -> None:
+        # Local sandbox is process-local and requires no teardown.
+        # Destroy is still exposed so tool-level recovery can use a uniform API.
+        self.release(sandbox_id)

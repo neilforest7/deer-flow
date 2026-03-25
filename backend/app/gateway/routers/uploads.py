@@ -7,6 +7,7 @@ from fastapi import APIRouter, File, HTTPException, UploadFile
 from pydantic import BaseModel
 
 from deerflow.config.paths import VIRTUAL_PATH_PREFIX, get_paths
+from deerflow.sandbox.exceptions import SandboxTransportError
 from deerflow.sandbox.sandbox_provider import get_sandbox_provider
 from deerflow.utils.file_conversion import CONVERTIBLE_EXTENSIONS, convert_file_to_markdown
 
@@ -35,6 +36,41 @@ def get_uploads_dir(thread_id: str) -> Path:
     base_dir = get_paths().sandbox_uploads_dir(thread_id)
     base_dir.mkdir(parents=True, exist_ok=True)
     return base_dir
+
+
+def _sync_bytes_to_sandbox(
+    *,
+    thread_id: str,
+    virtual_path: str,
+    content: bytes,
+    sandbox_provider,
+    sandbox_id: str,
+    sandbox,
+) -> tuple[str, object]:
+    """Sync uploaded bytes into a non-local sandbox with one transport retry."""
+    if sandbox_id == "local":
+        return sandbox_id, sandbox
+
+    if sandbox is None:
+        raise RuntimeError(f"Sandbox '{sandbox_id}' is not available")
+
+    try:
+        sandbox.update_file(virtual_path, content)
+        return sandbox_id, sandbox
+    except SandboxTransportError as exc:
+        logger.warning(
+            "Sandbox transport failed while syncing upload to %s via %s; recreating sandbox: %s",
+            virtual_path,
+            sandbox_id,
+            exc,
+        )
+        sandbox_provider.destroy(sandbox_id)
+        new_sandbox_id = sandbox_provider.acquire(thread_id)
+        new_sandbox = sandbox_provider.get(new_sandbox_id)
+        if new_sandbox is None:
+            raise RuntimeError(f"Sandbox '{new_sandbox_id}' is not available after recreation") from exc
+        new_sandbox.update_file(virtual_path, content)
+        return new_sandbox_id, new_sandbox
 
 
 @router.post("", response_model=UploadResponse)
@@ -86,8 +122,14 @@ async def upload_files(
 
             # Keep local sandbox source of truth in thread-scoped host storage.
             # For non-local sandboxes, also sync to virtual path for runtime visibility.
-            if sandbox_id != "local":
-                sandbox.update_file(virtual_path, content)
+            sandbox_id, sandbox = _sync_bytes_to_sandbox(
+                thread_id=thread_id,
+                virtual_path=virtual_path,
+                content=content,
+                sandbox_provider=sandbox_provider,
+                sandbox_id=sandbox_id,
+                sandbox=sandbox,
+            )
 
             file_info = {
                 "filename": safe_filename,
@@ -107,8 +149,14 @@ async def upload_files(
                     md_relative_path = str(paths.sandbox_uploads_dir(thread_id) / md_path.name)
                     md_virtual_path = f"{VIRTUAL_PATH_PREFIX}/uploads/{md_path.name}"
 
-                    if sandbox_id != "local":
-                        sandbox.update_file(md_virtual_path, md_path.read_bytes())
+                    sandbox_id, sandbox = _sync_bytes_to_sandbox(
+                        thread_id=thread_id,
+                        virtual_path=md_virtual_path,
+                        content=md_path.read_bytes(),
+                        sandbox_provider=sandbox_provider,
+                        sandbox_id=sandbox_id,
+                        sandbox=sandbox,
+                    )
 
                     file_info["markdown_file"] = md_path.name
                     file_info["markdown_path"] = md_relative_path

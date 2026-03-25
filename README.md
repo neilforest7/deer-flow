@@ -139,6 +139,8 @@ DeerFlow has newly integrated the intelligent search and crawling toolset indepe
 
    For self-hosted or custom `/v1/responses` gateways, prefer `deerflow.models.patched_responses_openai:PatchedResponsesOpenAI`. It keeps LangChain's OpenAI transport but normalizes streamed tool-call chunks and reasoning summaries that some custom endpoints emit differently from OpenAI's native API.
 
+   DeerFlow now also recreates stale AIO/provisioner sandboxes automatically after sandbox transport failures, so artifact generation can recover from transient `Connection refused` errors without restarting the stack. Existing sandboxes are only reused when both the HTTP readiness probe and backend liveness check succeed.
+
    CLI-backed provider examples:
 
    ```yaml
@@ -269,6 +271,8 @@ DeerFlow supports multiple sandbox execution modes:
 - **Docker Execution with Kubernetes** (runs sandbox code in Kubernetes pods via provisioner service)
 
 For Docker development, service startup follows `config.yaml` sandbox mode. In Local/Docker modes, `provisioner` is not started.
+
+Transient `write_file` / `str_replace` steps are treated as code-only scratch output in the UI. Final HTML and other generated artifacts should still be presented through `present_files`, which keeps large in-progress files from freezing the artifact preview pane during streaming.
 
 See the [Sandbox Configuration Guide](backend/docs/CONFIGURATION.md#sandbox) to configure your preferred mode.
 

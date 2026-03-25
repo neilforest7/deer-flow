@@ -124,17 +124,12 @@ export function MessageGroup({
                   }
                 ></ChainOfThoughtStep>
               ) : (
-                <ToolCall key={step.id} {...step} isLoading={isLoading} />
+                <ToolCall key={step.id} {...step} />
               ),
             )}
           {lastToolCallStep && (
             <FlipDisplay uniqueKey={lastToolCallStep.id ?? ""}>
-              <ToolCall
-                key={lastToolCallStep.id}
-                {...lastToolCallStep}
-                isLast={true}
-                isLoading={isLoading}
-              />
+              <ToolCall key={lastToolCallStep.id} {...lastToolCallStep} />
             </FlipDisplay>
           )}
         </ChainOfThoughtContent>
@@ -189,20 +184,15 @@ function ToolCall({
   name,
   args,
   result,
-  isLast = false,
-  isLoading = false,
 }: {
   id?: string;
   messageId?: string;
   name: string;
   args: Record<string, unknown>;
   result?: string | Record<string, unknown>;
-  isLast?: boolean;
-  isLoading?: boolean;
 }) {
   const { t } = useI18n();
-  const { setOpen, autoOpen, autoSelect, selectedArtifact, select } =
-    useArtifacts();
+  const { setOpen, select } = useArtifacts();
 
   if (name === "web_search") {
     let label: React.ReactNode = t.toolCalls.searchForRelatedInfo;
@@ -335,19 +325,6 @@ function ToolCall({
       description = t.toolCalls.writeFile;
     }
     const path: string | undefined = (args as { path: string })?.path;
-    if (isLoading && isLast && autoOpen && autoSelect && path) {
-      setTimeout(() => {
-        const url = new URL(
-          `write-file:${path}?message_id=${messageId}&tool_call_id=${id}`,
-        ).toString();
-        if (selectedArtifact === url) {
-          return;
-        }
-        select(url, true);
-        setOpen(true);
-      }, 100);
-    }
-
     return (
       <ChainOfThoughtStep
         key={id}

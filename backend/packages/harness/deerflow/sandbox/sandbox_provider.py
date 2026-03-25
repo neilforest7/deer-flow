@@ -35,6 +35,15 @@ class SandboxProvider(ABC):
         """
         pass
 
+    @abstractmethod
+    def destroy(self, sandbox_id: str) -> None:
+        """Destroy a sandbox environment immediately.
+
+        Args:
+            sandbox_id: The ID of the sandbox environment to destroy.
+        """
+        pass
+
 
 _default_sandbox_provider: SandboxProvider | None = None
 

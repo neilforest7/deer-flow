@@ -6,6 +6,7 @@ from unittest.mock import AsyncMock, MagicMock, patch
 from fastapi import UploadFile
 
 from app.gateway.routers import uploads
+from deerflow.sandbox.exceptions import SandboxTransportError
 
 
 def test_upload_files_writes_thread_storage_and_skips_local_sandbox_sync(tmp_path):
@@ -65,6 +66,40 @@ def test_upload_files_syncs_non_local_sandbox_and_marks_markdown_file(tmp_path):
 
     sandbox.update_file.assert_any_call("/mnt/user-data/uploads/report.pdf", b"pdf-bytes")
     sandbox.update_file.assert_any_call("/mnt/user-data/uploads/report.md", b"converted")
+
+
+def test_upload_files_recreates_non_local_sandbox_after_transport_error(tmp_path):
+    thread_uploads_dir = tmp_path / "uploads"
+    thread_uploads_dir.mkdir(parents=True)
+
+    stale_sandbox = MagicMock()
+    stale_sandbox.update_file.side_effect = SandboxTransportError(
+        "connection refused",
+        operation="update_file",
+        sandbox_url="http://stale-sandbox",
+    )
+    healthy_sandbox = MagicMock()
+
+    provider = MagicMock()
+    provider.acquire.side_effect = ["aio-1", "aio-2"]
+    provider.get.side_effect = [stale_sandbox, healthy_sandbox]
+
+    with (
+        patch.object(uploads, "get_uploads_dir", return_value=thread_uploads_dir),
+        patch.object(uploads, "get_sandbox_provider", return_value=provider),
+    ):
+        file = UploadFile(filename="notes.txt", file=BytesIO(b"hello uploads"))
+        result = asyncio.run(uploads.upload_files("thread-aio", files=[file]))
+
+    assert result.success is True
+    assert len(result.files) == 1
+    assert (thread_uploads_dir / "notes.txt").read_bytes() == b"hello uploads"
+
+    provider.destroy.assert_called_once_with("aio-1")
+    healthy_sandbox.update_file.assert_called_once_with(
+        "/mnt/user-data/uploads/notes.txt",
+        b"hello uploads",
+    )
 
 
 def test_upload_files_rejects_dotdot_and_dot_filenames(tmp_path):

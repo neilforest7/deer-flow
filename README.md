@@ -130,6 +130,8 @@ DeerFlow has newly integrated the intelligent search and crawling toolset indepe
        model: gpt-5.4
        api_key: $CUSTOM_OPENAI_API_KEY
        base_url: http://your-gateway/v1
+       store: true
+       use_previous_response_id: true
        output_version: responses/v1
    ```
 
@@ -137,7 +139,20 @@ DeerFlow has newly integrated the intelligent search and crawling toolset indepe
 
    To route OpenAI models through `/v1/responses`, keep using `langchain_openai:ChatOpenAI` and set `use_responses_api: true` with `output_version: responses/v1`.
 
-   For self-hosted or custom `/v1/responses` gateways, prefer `deerflow.models.patched_responses_openai:PatchedResponsesOpenAI`. It keeps LangChain's OpenAI transport but normalizes streamed tool-call chunks and reasoning summaries that some custom endpoints emit differently from OpenAI's native API.
+   For self-hosted or custom `/v1/responses` gateways, prefer `deerflow.models.patched_responses_openai:PatchedResponsesOpenAI`. It defaults to stateful Responses mode (`store: true` and `previous_response_id` threading) and also normalizes streamed tool-call chunks and reasoning summaries that some custom endpoints emit differently from OpenAI's native API.
+
+   If your gateway must run stateless (`store: false`), configure it explicitly. The adapter will sanitize replayed item IDs and request `reasoning.encrypted_content` automatically when reasoning is enabled:
+
+   ```yaml
+     - name: custom-gpt-5.4-stateless
+       display_name: GPT-5.4 (Custom Responses Stateless)
+       use: deerflow.models.patched_responses_openai:PatchedResponsesOpenAI
+       model: gpt-5.4
+       api_key: $CUSTOM_OPENAI_API_KEY
+       base_url: http://your-gateway/v1
+       store: false
+       output_version: responses/v1
+   ```
 
    DeerFlow now also recreates stale AIO/provisioner sandboxes automatically after sandbox transport failures, so artifact generation can recover from transient `Connection refused` errors without restarting the stack. Existing sandboxes are only reused when both the HTTP readiness probe and backend liveness check succeed.
 

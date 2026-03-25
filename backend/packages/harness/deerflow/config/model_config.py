@@ -21,6 +21,18 @@ class ModelConfig(BaseModel):
         default=None,
         description="Structured output version for OpenAI responses content, e.g. responses/v1",
     )
+    store: bool | None = Field(
+        default=None,
+        description="Whether Responses API responses should be persisted for future turns",
+    )
+    use_previous_response_id: bool | None = Field(
+        default=None,
+        description="Whether multi-turn Responses requests should prefer previous_response_id when persistence is enabled",
+    )
+    include: list[str] | None = Field(
+        default=None,
+        description="Extra Responses API fields to include in model outputs, e.g. reasoning.encrypted_content",
+    )
     supports_thinking: bool = Field(default_factory=lambda: False, description="Whether the model supports thinking")
     supports_reasoning_effort: bool = Field(default_factory=lambda: False, description="Whether the model supports reasoning effort")
     when_thinking_enabled: dict | None = Field(

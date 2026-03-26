@@ -18,7 +18,10 @@ export async function getProject(projectId: string): Promise<ProjectRecord> {
   const res = await fetch(
     `${getBackendBaseURL()}/api/projects/${encodeURIComponent(projectId)}`,
   );
-  if (!res.ok) throw new Error(`Project '${projectId}' not found`);
+  if (!res.ok) {
+    const err = (await res.json().catch(() => ({}))) as { detail?: string };
+    throw new Error(err.detail ?? `Failed to load project '${projectId}'`);
+  }
   return res.json() as Promise<ProjectRecord>;
 }
 

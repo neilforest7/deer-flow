@@ -48,6 +48,9 @@ services:
       - "${PORT:-2026}:2026"
     volumes:
       - ./nginx/${NGINX_CONF:-nginx.conf}:/etc/nginx/nginx.conf:ro
+    environment:
+      - NO_PROXY=${NO_PROXY:-localhost,127.0.0.1,::1},gateway,langgraph,postgres,frontend,nginx,deer-flow-gateway,deer-flow-langgraph,deer-flow-postgres,deer-flow-frontend,deer-flow-nginx,host.docker.internal
+      - no_proxy=${NO_PROXY:-localhost,127.0.0.1,::1},gateway,langgraph,postgres,frontend,nginx,deer-flow-gateway,deer-flow-langgraph,deer-flow-postgres,deer-flow-frontend,deer-flow-nginx,host.docker.internal
     depends_on:
       - frontend
       - gateway
@@ -67,6 +70,8 @@ services:
     container_name: deer-flow-frontend
     environment:
       - BETTER_AUTH_SECRET=${BETTER_AUTH_SECRET}
+      - NO_PROXY=${NO_PROXY:-localhost,127.0.0.1,::1},gateway,langgraph,postgres,frontend,nginx,deer-flow-gateway,deer-flow-langgraph,deer-flow-postgres,deer-flow-frontend,deer-flow-nginx,host.docker.internal
+      - no_proxy=${NO_PROXY:-localhost,127.0.0.1,::1},gateway,langgraph,postgres,frontend,nginx,deer-flow-gateway,deer-flow-langgraph,deer-flow-postgres,deer-flow-frontend,deer-flow-nginx,host.docker.internal
     env_file:
       - ../frontend/.env
     networks:
@@ -110,6 +115,8 @@ services:
       - DEER_FLOW_HOST_SKILLS_PATH=${DEER_FLOW_REPO_ROOT}/skills
       - DEER_FLOW_SANDBOX_HOST=host.docker.internal
       - DEERFLOW_POSTGRES_DSN=postgresql://${DEERFLOW_POSTGRES_USER:-deerflow}:${DEERFLOW_POSTGRES_PASSWORD:-deerflow}@postgres:5432/${DEERFLOW_POSTGRES_DB:-deerflow}
+      - NO_PROXY=${NO_PROXY:-localhost,127.0.0.1,::1},gateway,langgraph,postgres,frontend,nginx,deer-flow-gateway,deer-flow-langgraph,deer-flow-postgres,deer-flow-frontend,deer-flow-nginx,host.docker.internal
+      - no_proxy=${NO_PROXY:-localhost,127.0.0.1,::1},gateway,langgraph,postgres,frontend,nginx,deer-flow-gateway,deer-flow-langgraph,deer-flow-postgres,deer-flow-frontend,deer-flow-nginx,host.docker.internal
     env_file:
       - ../.env
     depends_on:
@@ -160,6 +167,8 @@ services:
       - DEER_FLOW_HOST_SKILLS_PATH=${DEER_FLOW_REPO_ROOT}/skills
       - DEER_FLOW_SANDBOX_HOST=host.docker.internal
       - DEERFLOW_POSTGRES_DSN=postgresql://${DEERFLOW_POSTGRES_USER:-deerflow}:${DEERFLOW_POSTGRES_PASSWORD:-deerflow}@postgres:5432/${DEERFLOW_POSTGRES_DB:-deerflow}
+      - NO_PROXY=${NO_PROXY:-localhost,127.0.0.1,::1},gateway,langgraph,postgres,frontend,nginx,deer-flow-gateway,deer-flow-langgraph,deer-flow-postgres,deer-flow-frontend,deer-flow-nginx,host.docker.internal
+      - no_proxy=${NO_PROXY:-localhost,127.0.0.1,::1},gateway,langgraph,postgres,frontend,nginx,deer-flow-gateway,deer-flow-langgraph,deer-flow-postgres,deer-flow-frontend,deer-flow-nginx,host.docker.internal
       # Disable LangSmith tracing — LANGSMITH_API_KEY is not required.
       # Set LANGCHAIN_TRACING_V2=true and LANGSMITH_API_KEY in .env to enable.
       - LANGCHAIN_TRACING_V2=${LANGCHAIN_TRACING_V2:-false}
@@ -192,6 +201,8 @@ services:
       - KUBECONFIG_PATH=/root/.kube/config
       - NODE_HOST=host.docker.internal
       - K8S_API_SERVER=https://host.docker.internal:26443
+      - NO_PROXY=${NO_PROXY:-localhost,127.0.0.1,::1},gateway,langgraph,postgres,frontend,nginx,deer-flow-gateway,deer-flow-langgraph,deer-flow-postgres,deer-flow-frontend,deer-flow-nginx,host.docker.internal
+      - no_proxy=${NO_PROXY:-localhost,127.0.0.1,::1},gateway,langgraph,postgres,frontend,nginx,deer-flow-gateway,deer-flow-langgraph,deer-flow-postgres,deer-flow-frontend,deer-flow-nginx,host.docker.internal
     env_file:
       - ../.env
     extra_hosts:

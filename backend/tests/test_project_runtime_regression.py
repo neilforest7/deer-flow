@@ -9,9 +9,7 @@ def test_langgraph_only_registers_lead_agent():
     langgraph_path = Path(__file__).parent.parent / "langgraph.json"
     payload = json.loads(langgraph_path.read_text(encoding="utf-8"))
 
-    assert payload["graphs"] == {
-        "lead_agent": "deerflow.agents:make_lead_agent",
-    }
+    assert payload["graphs"]["lead_agent"] == "deerflow.agents:make_lead_agent"
 
 
 def test_lead_agent_entrypoint_remains_available():

@@ -88,12 +88,19 @@ export function useThreadStream({
 
   useEffect(() => {
     const normalizedThreadId = threadId ?? null;
+    threadIdRef.current = normalizedThreadId;
     if (!normalizedThreadId) {
-      // Just reset for new thread creation when threadId becomes null/undefined
+      // Reset for new thread creation when threadId becomes null/undefined.
       startedRef.current = false;
       setOnStreamThreadId(normalizedThreadId);
+      return;
     }
-    threadIdRef.current = normalizedThreadId;
+
+    // Adopt a real thread id that arrives after first render, such as
+    // project detail pages that resolve their backing thread asynchronously.
+    setOnStreamThreadId((currentThreadId) =>
+      currentThreadId === normalizedThreadId ? currentThreadId : normalizedThreadId,
+    );
   }, [threadId]);
 
   const _handleOnStart = useCallback((id: string) => {

@@ -6,7 +6,7 @@ import json
 import tempfile
 import zipfile
 from pathlib import Path
-from unittest.mock import AsyncMock, MagicMock, patch
+from unittest.mock import MagicMock, patch
 
 import pytest
 from langchain_core.messages import AIMessage, HumanMessage, SystemMessage, ToolMessage  # noqa: F401
@@ -178,6 +178,19 @@ class TestConfigQueries:
 
 
 class TestProjectControl:
+    def test_embedded_project_agent_uses_sync_phase_execution(self, client):
+        config = client._get_runnable_config(
+            "project-sync-runtime",
+            subagent_enabled=True,
+            is_plan_mode=True,
+        )
+        client._checkpointer = MagicMock()
+
+        with patch("deerflow.client.build_project_lead_graph", return_value=MagicMock()) as mock_build:
+            client._ensure_project_agent(config)
+
+        assert mock_build.call_args.kwargs["async_phase_execution"] is False
+
     def test_resume_project_starts_local_project_runtime(self, client):
         fake_store = FakeStore()
         repo = ProjectStoreRepository(fake_store)
@@ -289,64 +302,6 @@ class TestProjectControl:
         invoke_kwargs = project_agent.invoke.call_args.kwargs
         assert invoke_kwargs["config"]["configurable"]["subagent_enabled"] is True
 
-    def test_project_chat_falls_back_to_ainvoke_when_sync_project_graph_is_not_supported(self, client):
-        fake_store = FakeStore()
-        repo = ProjectStoreRepository(fake_store)
-        repo.ensure_default_team()
-
-        project_id = "project-chat-async"
-        initial_state = build_initial_project_state(
-            project_id=project_id,
-            title="Project Chat Async",
-            objective="Drive a project conversation",
-        )
-        repo.put_project_index(
-            project_id,
-            {
-                "project_id": project_id,
-                "thread_id": project_id,
-                "assistant_id": "project_lead_agent",
-                "visible_agent_name": "lead-agent",
-                "title": "Project Chat Async",
-                "description": "Drive a project conversation",
-                "status": "active",
-                "phase": "build",
-                "team_name": "software-delivery-default",
-                "created_at": "2026-03-26T00:00:00Z",
-            },
-        )
-        repo.put_project_snapshot(
-            project_id,
-            {
-                "project_title": "Project Chat Async",
-                "project_brief": initial_state["project_brief"],
-                "work_orders": [],
-                "agent_reports": [],
-                "gate_decision": None,
-                "delivery_pack": None,
-                "active_batch": None,
-                "artifacts": [],
-            },
-        )
-        repo.put_project_control(project_id, initial_state["control_flags"])
-
-        project_agent = MagicMock()
-        project_agent.invoke.side_effect = TypeError('No synchronous function provided to "intake".')
-        project_agent.ainvoke = AsyncMock(
-            return_value={
-                "messages": [AIMessage(content="async project reply", id="ai-project-async-reply")]
-            }
-        )
-        with (
-            patch("deerflow.client.get_store", return_value=fake_store),
-            patch.object(client, "_ensure_project_agent"),
-            patch.object(client, "_project_agent", project_agent),
-        ):
-            result = client.project_chat(project_id, "continue")
-
-        assert result == "async project reply"
-        project_agent.invoke.assert_called_once()
-        project_agent.ainvoke.assert_awaited_once()
 
 
 # ---------------------------------------------------------------------------

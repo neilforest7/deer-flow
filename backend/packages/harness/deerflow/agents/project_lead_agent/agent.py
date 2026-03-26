@@ -66,6 +66,7 @@ def build_project_lead_graph(
     config: RunnableConfig,
     *,
     checkpointer=None,
+    async_phase_execution: bool = True,
 ):
     """Build the project delivery graph.
 
@@ -159,7 +160,31 @@ def build_project_lead_graph(
         return phase
 
     def _build_phase_node(phase: str):
-        async def _run_phase(
+        if async_phase_execution:
+            async def _run_phase(
+                state: ProjectState,
+                runtime: Runtime[dict[str, Any]],
+                config: RunnableConfig,
+            ) -> dict[str, Any]:
+                project_state = dict(state)
+                configurable = (config.get("configurable", {}) or {}) if config else {}
+                projection = compute_project_state_projection(
+                    project_state,
+                    control_flags=project_state.get("control_flags"),
+                    max_parallelism=int(configurable.get("max_concurrent_subagents", 3)),
+                )
+                project_state.update(projection)
+                project_state["project_phase"] = phase
+                project_state.setdefault("project_status", "draft" if phase == "intake" else "active")
+                return await phase_agents[phase].ainvoke(
+                    project_state,
+                    config=config,
+                    context=runtime.context,
+                )
+
+            return _run_phase
+
+        def _run_phase(
             state: ProjectState,
             runtime: Runtime[dict[str, Any]],
             config: RunnableConfig,
@@ -174,7 +199,7 @@ def build_project_lead_graph(
             project_state.update(projection)
             project_state["project_phase"] = phase
             project_state.setdefault("project_status", "draft" if phase == "intake" else "active")
-            return await phase_agents[phase].ainvoke(
+            return phase_agents[phase].invoke(
                 project_state,
                 config=config,
                 context=runtime.context,

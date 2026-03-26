@@ -26,6 +26,7 @@ This directory contains detailed documentation for the DeerFlow backend.
 | Document | Description |
 |----------|-------------|
 | [TODO.md](TODO.md) | Planned features and known issues |
+| [project_team_runtime_prd.md](project_team_runtime_prd.md) | M1 PRD for the independent project team runtime |
 
 ## Getting Started
 
@@ -49,5 +50,6 @@ docs/
 ├── plan_mode_usage.md         # Plan mode feature
 ├── AUTO_TITLE_GENERATION.md   # Title generation
 ├── TITLE_GENERATION_IMPLEMENTATION.md  # Title implementation details
+├── project_team_runtime_prd.md # Independent project team runtime PRD
 └── TODO.md                    # Roadmap and issues
 ```

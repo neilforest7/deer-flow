@@ -38,6 +38,7 @@ function valueAsText(value: unknown): string {
 export default function ProjectDetailPage() {
   const params = useParams<{ project_id: string }>();
   const projectId = typeof params?.project_id === "string" ? params.project_id : "";
+  const resolvedThreadId = projectId || undefined;
   const [settings, setSettings] = useLocalSettings();
   const {
     data: project,
@@ -54,7 +55,7 @@ export default function ProjectDetailPage() {
   }, [project?.title]);
 
   const [thread, sendMessage, isUploading] = useThreadStream({
-    threadId: project?.thread_id,
+    threadId: project?.thread_id ?? resolvedThreadId,
     assistantId: "project_lead_agent",
     context: settings.context,
     runtimeContextOverrides: {
@@ -67,10 +68,12 @@ export default function ProjectDetailPage() {
 
   const handleSubmit = useCallback(
     (message: PromptInputMessage) => {
-      if (!project?.thread_id) return;
-      void sendMessage(project.thread_id, message, { project_id: project.project_id });
+      if (!project?.thread_id && !resolvedThreadId) return;
+      void sendMessage(project?.thread_id ?? resolvedThreadId!, message, {
+        project_id: project?.project_id ?? projectId,
+      });
     },
-    [project, sendMessage],
+    [project, projectId, resolvedThreadId, sendMessage],
   );
 
   const handleStop = useCallback(async () => {

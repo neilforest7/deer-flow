@@ -8,8 +8,6 @@ from typing import Any
 
 from langgraph.store.base import BaseStore
 
-from deerflow.subagents.builtins.project_delivery import PROJECT_DELIVERY_SPECIALIST_SUMMARIES
-
 DEFAULT_PROJECT_TEAM_NAME = "software-delivery-default"
 MEMORY_GLOBAL_NAMESPACE = ("memory", "global")
 MEMORY_AGENT_NAMESPACE = ("memory", "agents")
@@ -17,6 +15,25 @@ PROJECT_INDEX_NAMESPACE = ("projects", "index")
 PROJECT_SNAPSHOT_NAMESPACE = ("projects", "snapshots")
 PROJECT_CONTROL_NAMESPACE = ("projects", "controls")
 PROJECT_TEAM_NAMESPACE = ("project-teams",)
+
+# Keep the built-in project team catalog local to the store layer so
+# default-team bootstrap does not import `deerflow.subagents` and re-enter the
+# agent stack during application startup.
+PROJECT_TEAM_SPECIALIST_SUMMARIES = {
+    "discovery-agent": "Researches goals, requirements, constraints, source facts, and feasibility.",
+    "architect-agent": "Designs system boundaries, interfaces, data flow, and technical approach.",
+    "planner-agent": "Turns briefs into phased execution plans and concrete work orders.",
+    "design-agent": "Explores visual direction, UX structure, and design-system level decisions.",
+    "frontend-agent": "Implements UI, frontend state, and browser-facing behavior.",
+    "backend-agent": "Implements APIs, services, business logic, and server-side workflows.",
+    "integration-agent": "Handles external APIs, auth flows, SDKs, automation, MCP, and messaging.",
+    "data-agent": "Builds data pipelines, ETL, analytics, evaluation flows, and schema-heavy logic.",
+    "devops-agent": "Owns CI/CD, containers, infrastructure, deployment wiring, and observability.",
+    "qa-agent": "Validates behavior, runs tests/reviews, and emits a gate decision instead of editing product code.",
+    "delivery-agent": "Packages outputs, docs, and release-candidate artifacts for user handoff.",
+    "general-purpose": "Fallback specialist for cross-cutting work that does not fit a narrower role.",
+    "bash": "Command execution specialist for build, test, git, or operational terminal work.",
+}
 
 
 def utc_now() -> str:
@@ -43,7 +60,7 @@ def build_default_team_definition() -> dict[str, Any]:
                 "name": name,
                 "summary": summary,
             }
-            for name, summary in PROJECT_DELIVERY_SPECIALIST_SUMMARIES.items()
+            for name, summary in PROJECT_TEAM_SPECIALIST_SUMMARIES.items()
             if name not in {"general-purpose", "bash"}
         ],
         "routing_policy": {

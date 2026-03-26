@@ -4,7 +4,7 @@ from fastapi import FastAPI
 from fastapi.testclient import TestClient
 
 from app.gateway.routers import projects
-from deerflow.projects import build_initial_project_state
+from deerflow.projects import PROJECT_STATE_UPDATE_NODE, build_initial_project_state
 from deerflow.store import ProjectStoreRepository
 
 
@@ -38,14 +38,35 @@ class FakeThreadsClient:
         self.created: list[dict] = []
         self.updated: list[dict] = []
         self.states: dict[str, dict] = {}
+        self.graph_ids: dict[str, str] = {}
+        self.valid_nodes_by_graph: dict[str, set[str]] = {
+            "project_lead_agent": {
+                PROJECT_STATE_UPDATE_NODE,
+                "intake",
+                "discovery",
+                "architecture",
+                "planning",
+                "build",
+                "qa_gate",
+                "delivery",
+                "paused",
+                "closed",
+            }
+        }
 
     async def create(self, **kwargs):
         self.created.append(kwargs)
         thread_id = kwargs["thread_id"]
+        self.graph_ids[thread_id] = kwargs["graph_id"]
         self.states.setdefault(thread_id, {"values": {}})
         return {"thread_id": thread_id}
 
     async def update_state(self, thread_id, values, **kwargs):
+        as_node = kwargs.get("as_node")
+        graph_id = self.graph_ids.get(thread_id)
+        valid_nodes = self.valid_nodes_by_graph.get(graph_id or "", set())
+        if as_node is not None and as_node not in valid_nodes:
+            raise ValueError(f"Node {as_node} does not exist")
         self.updated.append({"thread_id": thread_id, "values": values, **kwargs})
         current_values = self.states.setdefault(thread_id, {"values": {}})["values"]
         current_values.update(values or {})
@@ -104,6 +125,7 @@ def test_create_project_route_bootstraps_project_thread():
     assert body["assistant_id"] == "project_lead_agent"
     assert body["thread_id"] == body["project_id"]
     assert fake_client.threads.created[0]["graph_id"] == "project_lead_agent"
+    assert fake_client.threads.updated[0]["as_node"] == PROJECT_STATE_UPDATE_NODE
 
 
 def test_control_project_route_updates_control_flags():
@@ -149,6 +171,7 @@ def test_control_project_route_updates_control_flags():
     )
     repo.put_project_control(project_id, initial_state["control_flags"])
     fake_client.threads.states[thread_id] = {"values": initial_state}
+    fake_client.threads.graph_ids[thread_id] = "project_lead_agent"
 
     app = FastAPI()
     app.include_router(projects.router)
@@ -171,6 +194,8 @@ def test_control_project_route_updates_control_flags():
     assert pause_response.json()["control_flags"]["pause_requested"] is True
     assert resume_response.status_code == 200
     assert resume_response.json()["control_flags"]["pause_requested"] is False
+    assert fake_client.threads.updated[0]["as_node"] == PROJECT_STATE_UPDATE_NODE
+    assert fake_client.threads.updated[1]["as_node"] == PROJECT_STATE_UPDATE_NODE
 
 
 def test_resume_project_route_starts_new_run_for_paused_project():
@@ -218,6 +243,7 @@ def test_resume_project_route_starts_new_run_for_paused_project():
     paused_control["pause_requested"] = True
     repo.put_project_control(project_id, paused_control)
     fake_client.threads.states[project_id] = {"values": initial_state}
+    fake_client.threads.graph_ids[project_id] = "project_lead_agent"
 
     app = FastAPI()
     app.include_router(projects.router)
@@ -288,6 +314,7 @@ def test_resume_project_route_rolls_back_control_flags_when_run_creation_fails()
     paused_control["pause_requested"] = True
     repo.put_project_control(project_id, paused_control)
     fake_client.threads.states[project_id] = {"values": initial_state}
+    fake_client.threads.graph_ids[project_id] = "project_lead_agent"
 
     app = FastAPI()
     app.include_router(projects.router)

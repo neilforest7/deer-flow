@@ -18,6 +18,7 @@ from deerflow.store.repositories import utc_now
 PROJECT_GRAPH_ID = "project_lead_agent"
 PROJECT_VISIBLE_AGENT_NAME = "lead-agent"
 PROJECT_MEMORY_SCOPE = "lead-agent"
+PROJECT_STATE_UPDATE_NODE = "__start__"
 PROJECT_PHASES = (
     "intake",
     "discovery",

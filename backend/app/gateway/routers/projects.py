@@ -14,6 +14,7 @@ from deerflow.projects import (
     PROJECT_ACTIONS,
     PROJECT_GRAPH_ID,
     PROJECT_MEMORY_SCOPE,
+    PROJECT_STATE_UPDATE_NODE,
     apply_project_action_payload,
     build_initial_project_state,
     build_project_index,
@@ -42,7 +43,7 @@ async def _sync_project_control_flags(thread_id: str, control_flags: dict[str, A
     await _get_langgraph_client().threads.update_state(
         thread_id,
         {"control_flags": control_flags},
-        as_node="project_control",
+        as_node=PROJECT_STATE_UPDATE_NODE,
     )
 
 
@@ -184,7 +185,7 @@ async def create_project(request: ProjectCreateRequest) -> ProjectRecordResponse
         await _get_langgraph_client().threads.update_state(
             thread_id,
             initial_state,
-            as_node="project_bootstrap",
+            as_node=PROJECT_STATE_UPDATE_NODE,
         )
     except Exception as exc:
         logger.exception("Failed to create project thread %s", project_id)

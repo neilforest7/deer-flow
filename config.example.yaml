@@ -12,7 +12,7 @@
 # ============================================================================
 # Bump this number when the config schema changes.
 # Run `make config-upgrade` to merge new fields into your local config.yaml.
-config_version: 3
+config_version: 4
 
 # ============================================================================
 # Logging
@@ -137,7 +137,7 @@ models:
   #       thinking:
   #         type: enabled
 
-  # Example: MiniMax (OpenAI-compatible) - International Edition
+  # Example: MiniMax (OpenAI-compatible)
   # MiniMax provides high-performance models with 204K context window
   # Docs: https://platform.minimax.io/docs/api-reference/text-openai-api
   # - name: minimax-m2.5
@@ -159,30 +159,6 @@ models:
   #   max_tokens: 4096
   #   temperature: 1.0  # MiniMax requires temperature in (0.0, 1.0]
   #   supports_vision: true
-
-  # Example: MiniMax (OpenAI-compatible) - CN 中国区用户
-  # MiniMax provides high-performance models with 204K context window
-  # Docs: https://platform.minimaxi.com/docs/api-reference/text-openai-api
-  # - name: minimax-m2.7
-  #   display_name: MiniMax M2.7
-  #   use: langchain_openai:ChatOpenAI
-  #   model: MiniMax-M2.7
-  #   api_key: $MINIMAX_API_KEY
-  #   base_url: https://api.minimaxi.com/v1
-  #   max_tokens: 4096
-  #   temperature: 1.0  # MiniMax requires temperature in (0.0, 1.0]
-  #   supports_vision: true
-
-  # - name: minimax-m2.5-highspeed
-  #   display_name: MiniMax M2.5 Highspeed
-  #   use: langchain_openai:ChatOpenAI
-  #   model: MiniMax-M2.5-highspeed
-  #   api_key: $MINIMAX_API_KEY
-  #   base_url: https://api.minimaxi.com/v1
-  #   max_tokens: 4096
-  #   temperature: 1.0  # MiniMax requires temperature in (0.0, 1.0]
-  #   supports_vision: true
-
   
   # Example: OpenRouter (OpenAI-compatible)
   # OpenRouter models use the same ChatOpenAI + base_url pattern as other OpenAI-compatible gateways.
@@ -449,7 +425,7 @@ summarization:
 # Stores user context and conversation history for personalized responses
 memory:
   enabled: true
-  storage_path: memory.json # Path relative to backend directory
+  storage_path: memory.json # Legacy import path for one-time JSON -> Postgres migration
   debounce_seconds: 30 # Wait time before processing queued updates
   model_name: null # Use default model
   max_facts: 100 # Maximum number of facts to store
@@ -460,35 +436,21 @@ memory:
 # ============================================================================
 # Checkpointer Configuration
 # ============================================================================
-# Configure state persistence for the embedded DeerFlowClient.
-# The LangGraph Server manages its own state persistence separately
-# via the server infrastructure (this setting does not affect it).
-#
-# When configured, DeerFlowClient will automatically use this checkpointer,
-# enabling multi-turn conversations to persist across process restarts.
-#
-# Supported types:
-#   memory   - In-process only. State is lost when the process exits. (default)
-#   sqlite   - File-based SQLite persistence. Survives restarts.
-#              Requires: uv add langgraph-checkpoint-sqlite
-#   postgres - PostgreSQL persistence. Suitable for multi-process deployments.
-#              Requires: uv add langgraph-checkpoint-postgres psycopg[binary] psycopg-pool
-#
-# Examples:
-#
-# In-memory (default when omitted — no persistence):
-# checkpointer:
-#   type: memory
-#
-# SQLite (file-based, single-process):
 checkpointer:
-  type: sqlite
-  connection_string: checkpoints.db
-#
-# PostgreSQL (multi-process, production):
-# checkpointer:
-#   type: postgres
-#   connection_string: postgresql://user:password@localhost:5432/deerflow
+  type: postgres
+  connection_string: $DEERFLOW_POSTGRES_DSN
+
+# ============================================================================
+# LangGraph Store Configuration
+# ============================================================================
+# DeerFlow requires the official LangGraph PostgresStore for:
+# - long-term memory
+# - project index / snapshots / control mailbox
+# - team definitions
+# - archived delivery knowledge
+store:
+  type: postgres
+  connection_string: $DEERFLOW_POSTGRES_DSN
 
 # ============================================================================
 # IM Channels Configuration

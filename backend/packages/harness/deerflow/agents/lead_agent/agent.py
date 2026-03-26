@@ -19,6 +19,7 @@ from deerflow.config.agents_config import load_agent_config
 from deerflow.config.app_config import get_app_config
 from deerflow.config.summarization_config import get_summarization_config
 from deerflow.models import create_chat_model
+from deerflow.store import get_store
 
 logger = logging.getLogger(__name__)
 
@@ -205,12 +206,19 @@ Being proactive with task management demonstrates thoroughness and ensures all r
 # ViewImageMiddleware should be before ClarificationMiddleware to inject image details before LLM
 # ToolErrorHandlingMiddleware should be before ClarificationMiddleware to convert tool exceptions to ToolMessages
 # ClarificationMiddleware should be last to intercept clarification requests after model calls
-def _build_middlewares(config: RunnableConfig, model_name: str | None, agent_name: str | None = None):
+def _build_middlewares(
+    config: RunnableConfig,
+    model_name: str | None,
+    agent_name: str | None = None,
+    *,
+    memory_scope: str | None = None,
+):
     """Build middleware chain based on runtime configuration.
 
     Args:
         config: Runtime configuration containing configurable options like is_plan_mode.
-        agent_name: If provided, MemoryMiddleware will use per-agent memory storage.
+        agent_name: If provided, resolves custom agent configuration and prompt identity.
+        memory_scope: If provided, uses a dedicated long-term memory namespace.
 
     Returns:
         List of middleware instances.
@@ -236,7 +244,7 @@ def _build_middlewares(config: RunnableConfig, model_name: str | None, agent_nam
     middlewares.append(TitleMiddleware())
 
     # Add MemoryMiddleware (after TitleMiddleware)
-    middlewares.append(MemoryMiddleware(agent_name=agent_name))
+    middlewares.append(MemoryMiddleware(memory_scope=memory_scope if memory_scope is not None else agent_name))
 
     # Add ViewImageMiddleware only if the current model supports vision.
     # Use the resolved runtime model_name from make_lead_agent to avoid stale config values.
@@ -328,16 +336,33 @@ def make_lead_agent(config: RunnableConfig):
         return create_agent(
             model=create_chat_model(name=model_name, thinking_enabled=thinking_enabled),
             tools=get_available_tools(model_name=model_name, subagent_enabled=subagent_enabled) + [setup_agent],
-            middleware=_build_middlewares(config, model_name=model_name),
-            system_prompt=apply_prompt_template(subagent_enabled=subagent_enabled, max_concurrent_subagents=max_concurrent_subagents, available_skills=set(["bootstrap"])),
+            middleware=_build_middlewares(config, model_name=model_name, memory_scope=agent_name),
+            system_prompt=apply_prompt_template(
+                subagent_enabled=subagent_enabled,
+                max_concurrent_subagents=max_concurrent_subagents,
+                memory_scope=agent_name,
+                available_skills=set(["bootstrap"]),
+            ),
             state_schema=ThreadState,
+            store=get_store(),
         )
 
     # Default lead agent (unchanged behavior)
     return create_agent(
         model=create_chat_model(name=model_name, thinking_enabled=thinking_enabled, reasoning_effort=reasoning_effort),
         tools=get_available_tools(model_name=model_name, groups=agent_config.tool_groups if agent_config else None, subagent_enabled=subagent_enabled),
-        middleware=_build_middlewares(config, model_name=model_name, agent_name=agent_name),
-        system_prompt=apply_prompt_template(subagent_enabled=subagent_enabled, max_concurrent_subagents=max_concurrent_subagents, agent_name=agent_name),
+        middleware=_build_middlewares(
+            config,
+            model_name=model_name,
+            agent_name=agent_name,
+            memory_scope=agent_name,
+        ),
+        system_prompt=apply_prompt_template(
+            subagent_enabled=subagent_enabled,
+            max_concurrent_subagents=max_concurrent_subagents,
+            agent_name=agent_name,
+            memory_scope=agent_name,
+        ),
         state_schema=ThreadState,
+        store=get_store(),
     )

@@ -158,6 +158,7 @@ export const zhCN: Translations = {
     recentChats: "最近的对话",
     demoChats: "演示对话",
     agents: "智能体",
+    projects: "项目",
   },
 
   // Agents
@@ -193,6 +194,7 @@ export const zhCN: Translations = {
   breadcrumb: {
     workspace: "工作区",
     chats: "对话",
+    projects: "项目",
   },
 
   // Workspace

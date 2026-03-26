@@ -12,12 +12,15 @@ from app.gateway.routers import (
     mcp,
     memory,
     models,
+    projects,
     skills,
     suggestions,
     threads,
     uploads,
 )
+from deerflow.agents.checkpointer import get_checkpointer
 from deerflow.config.app_config import get_app_config
+from deerflow.store import get_store
 
 # Configure logging
 logging.basicConfig(
@@ -36,6 +39,8 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
     # Load config and check necessary environment variables at startup
     try:
         get_app_config()
+        get_checkpointer()
+        get_store()
         logger.info("Configuration loaded successfully")
     except Exception as e:
         error_msg = f"Failed to load configuration during gateway startup: {e}"
@@ -114,7 +119,11 @@ This gateway provides custom endpoints for models, MCP configuration, skills, an
             },
             {
                 "name": "memory",
-                "description": "Access and manage global memory data for personalized conversations",
+                "description": "Access and manage long-term memory stored in LangGraph Store",
+            },
+            {
+                "name": "projects",
+                "description": "Create, monitor, and control project delivery threads and team definitions",
             },
             {
                 "name": "skills",
@@ -162,6 +171,9 @@ This gateway provides custom endpoints for models, MCP configuration, skills, an
 
     # Memory API is mounted at /api/memory
     app.include_router(memory.router)
+
+    # Project Delivery OS APIs are mounted at /api/projects and /api/project-teams
+    app.include_router(projects.router)
 
     # Skills API is mounted at /api/skills
     app.include_router(skills.router)

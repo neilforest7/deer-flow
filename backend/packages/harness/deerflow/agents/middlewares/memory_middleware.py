@@ -95,14 +95,15 @@ class MemoryMiddleware(AgentMiddleware[MemoryMiddlewareState]):
 
     state_schema = MemoryMiddlewareState
 
-    def __init__(self, agent_name: str | None = None):
+    def __init__(self, memory_scope: str | None = None):
         """Initialize the MemoryMiddleware.
 
         Args:
-            agent_name: If provided, memory is stored per-agent. If None, uses global memory.
+            memory_scope: If provided, memory is stored in a dedicated namespace.
+                If None, uses the global memory namespace.
         """
         super().__init__()
-        self._agent_name = agent_name
+        self._memory_scope = memory_scope
 
     @override
     def after_agent(self, state: MemoryMiddlewareState, runtime: Runtime) -> dict | None:
@@ -144,6 +145,6 @@ class MemoryMiddleware(AgentMiddleware[MemoryMiddlewareState]):
 
         # Queue the filtered conversation for memory update
         queue = get_memory_queue()
-        queue.add(thread_id=thread_id, messages=filtered_messages, agent_name=self._agent_name)
+        queue.add(thread_id=thread_id, messages=filtered_messages, agent_name=self._memory_scope)
 
         return None

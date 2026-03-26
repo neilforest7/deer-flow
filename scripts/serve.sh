@@ -89,6 +89,29 @@ fi
 
 "$REPO_ROOT/scripts/config-upgrade.sh"
 
+# ── Validate Postgres persistence ────────────────────────────────────────
+
+echo "Validating PostgreSQL-backed DeerFlow persistence..."
+if ! (
+    cd backend &&
+    PYTHONPATH=. uv run python - <<'PY'
+from deerflow.agents.checkpointer import get_checkpointer
+from deerflow.config.app_config import get_app_config
+from deerflow.store import get_store
+
+get_app_config()
+get_checkpointer()
+get_store()
+print("Persistence OK")
+PY
+); then
+    echo "✗ PostgreSQL persistence validation failed."
+    echo "  DeerFlow now requires both checkpointer and store to use PostgreSQL."
+    echo "  Check your config.yaml and ensure DEERFLOW_POSTGRES_DSN resolves to a reachable database."
+    exit 1
+fi
+echo "✓ PostgreSQL persistence is reachable"
+
 # ── Cleanup trap ─────────────────────────────────────────────────────────────
 
 cleanup() {

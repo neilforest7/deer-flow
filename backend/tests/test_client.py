@@ -18,6 +18,8 @@ from app.gateway.routers.skills import SkillInstallResponse, SkillResponse, Skil
 from app.gateway.routers.uploads import UploadResponse
 from deerflow.client import DeerFlowClient
 from deerflow.config.paths import Paths
+from deerflow.projects import build_initial_project_state
+from deerflow.store import ProjectStoreRepository
 from deerflow.uploads.manager import PathTraversalError
 
 # ---------------------------------------------------------------------------
@@ -45,6 +47,31 @@ def client(mock_app_config):
     """Create a DeerFlowClient with mocked config loading."""
     with patch("deerflow.client.get_app_config", return_value=mock_app_config):
         return DeerFlowClient()
+
+
+class _StoreItem:
+    def __init__(self, value):
+        self.value = value
+
+
+class FakeStore:
+    def __init__(self):
+        self._data: dict[tuple[str, ...], dict[str, dict]] = {}
+
+    def get(self, namespace, key):
+        value = self._data.get(tuple(namespace), {}).get(key)
+        return _StoreItem(value) if value is not None else None
+
+    def put(self, namespace, key, value):
+        self._data.setdefault(tuple(namespace), {})[key] = value
+
+    def delete(self, namespace, key):
+        self._data.get(tuple(namespace), {}).pop(key, None)
+
+    def search(self, namespace, limit=100, offset=0):
+        values = list(self._data.get(tuple(namespace), {}).values())
+        sliced = values[offset : offset + limit]
+        return [_StoreItem(value) for value in sliced]
 
 
 # ---------------------------------------------------------------------------
@@ -148,6 +175,119 @@ class TestConfigQueries:
             result = client.get_memory()
             mock_mem.assert_called_once()
         assert result == memory
+
+
+class TestProjectControl:
+    def test_resume_project_starts_local_project_runtime(self, client):
+        fake_store = FakeStore()
+        repo = ProjectStoreRepository(fake_store)
+        repo.ensure_default_team()
+
+        project_id = "project-local-resume"
+        initial_state = build_initial_project_state(
+            project_id=project_id,
+            title="Paused Project",
+            objective="Resume work",
+        )
+        repo.put_project_index(
+            project_id,
+            {
+                "project_id": project_id,
+                "thread_id": project_id,
+                "assistant_id": "project_lead_agent",
+                "visible_agent_name": "lead-agent",
+                "title": "Paused Project",
+                "description": "Resume work",
+                "status": "paused",
+                "phase": "build",
+                "team_name": "software-delivery-default",
+                "created_at": "2026-03-26T00:00:00Z",
+            },
+        )
+        repo.put_project_snapshot(
+            project_id,
+            {
+                "project_title": "Paused Project",
+                "project_brief": initial_state["project_brief"],
+                "work_orders": [],
+                "agent_reports": [],
+                "gate_decision": None,
+                "delivery_pack": None,
+                "active_batch": None,
+                "artifacts": [],
+            },
+        )
+        paused_control = dict(initial_state["control_flags"])
+        paused_control["pause_requested"] = True
+        repo.put_project_control(project_id, paused_control)
+
+        project_agent = MagicMock()
+        with (
+            patch("deerflow.client.get_store", return_value=fake_store),
+            patch.object(client, "_ensure_project_agent"),
+            patch.object(client, "_project_agent", project_agent),
+        ):
+            result = client.control_project(project_id, "resume")
+
+        assert result["control_flags"]["pause_requested"] is False
+        project_agent.invoke.assert_called_once()
+
+    def test_project_chat_forces_subagent_enabled_for_project_runtime(self, client):
+        fake_store = FakeStore()
+        repo = ProjectStoreRepository(fake_store)
+        repo.ensure_default_team()
+
+        project_id = "project-chat-runtime"
+        initial_state = build_initial_project_state(
+            project_id=project_id,
+            title="Project Chat",
+            objective="Drive a project conversation",
+        )
+        repo.put_project_index(
+            project_id,
+            {
+                "project_id": project_id,
+                "thread_id": project_id,
+                "assistant_id": "project_lead_agent",
+                "visible_agent_name": "lead-agent",
+                "title": "Project Chat",
+                "description": "Drive a project conversation",
+                "status": "active",
+                "phase": "build",
+                "team_name": "software-delivery-default",
+                "created_at": "2026-03-26T00:00:00Z",
+            },
+        )
+        repo.put_project_snapshot(
+            project_id,
+            {
+                "project_title": "Project Chat",
+                "project_brief": initial_state["project_brief"],
+                "work_orders": [],
+                "agent_reports": [],
+                "gate_decision": None,
+                "delivery_pack": None,
+                "active_batch": None,
+                "artifacts": [],
+            },
+        )
+        repo.put_project_control(project_id, initial_state["control_flags"])
+
+        project_agent = MagicMock()
+        project_agent.invoke.return_value = {
+            "messages": [AIMessage(content="project reply", id="ai-project-reply")]
+        }
+        with (
+            patch("deerflow.client.get_store", return_value=fake_store),
+            patch.object(client, "_ensure_project_agent"),
+            patch.object(client, "_project_agent", project_agent),
+        ):
+            result = client.project_chat(project_id, "continue")
+
+        assert result == "project reply"
+        project_agent.invoke.assert_called_once()
+        invoke_kwargs = project_agent.invoke.call_args.kwargs
+        assert invoke_kwargs["config"]["configurable"]["subagent_enabled"] is True
 
 
 # ---------------------------------------------------------------------------
@@ -390,7 +530,9 @@ class TestEnsureAgent:
             patch("deerflow.client.create_agent", return_value=mock_agent),
             patch("deerflow.client._build_middlewares", return_value=[]) as mock_build_middlewares,
             patch("deerflow.client.apply_prompt_template", return_value="prompt") as mock_apply_prompt,
+            patch("deerflow.client.get_store", return_value=MagicMock()),
             patch.object(client, "_get_tools", return_value=[]),
+            patch("deerflow.agents.checkpointer.get_checkpointer", return_value=MagicMock()),
         ):
             client._agent_name = "custom-agent"
             client._ensure_agent(config)
@@ -412,6 +554,7 @@ class TestEnsureAgent:
             patch("deerflow.client.create_agent", return_value=mock_agent) as mock_create_agent,
             patch("deerflow.client._build_middlewares", return_value=[]),
             patch("deerflow.client.apply_prompt_template", return_value="prompt"),
+            patch("deerflow.client.get_store", return_value=MagicMock()),
             patch.object(client, "_get_tools", return_value=[]),
             patch("deerflow.agents.checkpointer.get_checkpointer", return_value=mock_checkpointer),
         ):
@@ -428,6 +571,7 @@ class TestEnsureAgent:
             patch("deerflow.client.create_agent", return_value=mock_agent) as mock_create_agent,
             patch("deerflow.client._build_middlewares", return_value=[]),
             patch("deerflow.client.apply_prompt_template", return_value="prompt"),
+            patch("deerflow.client.get_store", return_value=MagicMock()),
             patch.object(client, "_get_tools", return_value=[]),
             patch("deerflow.agents.checkpointer.get_checkpointer", return_value=None),
         ):
@@ -1176,7 +1320,9 @@ class TestScenarioAgentRecreation:
             patch("deerflow.client.create_agent", side_effect=fake_create_agent),
             patch("deerflow.client._build_middlewares", return_value=[]),
             patch("deerflow.client.apply_prompt_template", return_value="prompt"),
+            patch("deerflow.client.get_store", return_value=MagicMock()),
             patch.object(client, "_get_tools", return_value=[]),
+            patch("deerflow.agents.checkpointer.get_checkpointer", return_value=MagicMock()),
         ):
             client._ensure_agent(config_a)
             first_agent = client._agent
@@ -1203,7 +1349,9 @@ class TestScenarioAgentRecreation:
             patch("deerflow.client.create_agent", side_effect=fake_create_agent),
             patch("deerflow.client._build_middlewares", return_value=[]),
             patch("deerflow.client.apply_prompt_template", return_value="prompt"),
+            patch("deerflow.client.get_store", return_value=MagicMock()),
             patch.object(client, "_get_tools", return_value=[]),
+            patch("deerflow.agents.checkpointer.get_checkpointer", return_value=MagicMock()),
         ):
             client._ensure_agent(config)
             client._ensure_agent(config)
@@ -1227,7 +1375,9 @@ class TestScenarioAgentRecreation:
             patch("deerflow.client.create_agent", side_effect=fake_create_agent),
             patch("deerflow.client._build_middlewares", return_value=[]),
             patch("deerflow.client.apply_prompt_template", return_value="prompt"),
+            patch("deerflow.client.get_store", return_value=MagicMock()),
             patch.object(client, "_get_tools", return_value=[]),
+            patch("deerflow.agents.checkpointer.get_checkpointer", return_value=MagicMock()),
         ):
             client._ensure_agent(config)
             client.reset_agent()

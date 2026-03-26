@@ -16,7 +16,7 @@ import { useUpdateSubtask } from "../tasks/context";
 import type { UploadedFileInfo } from "../uploads";
 import { uploadFiles } from "../uploads";
 
-import type { AgentThread, AgentThreadState } from "./types";
+import type { AgentThread, AgentThreadContext, AgentThreadState } from "./types";
 
 export type ToolEndEvent = {
   name: string;
@@ -25,7 +25,9 @@ export type ToolEndEvent = {
 
 export type ThreadStreamOptions = {
   threadId?: string | null | undefined;
+  assistantId?: string;
   context: LocalSettings["context"];
+  runtimeContextOverrides?: Partial<AgentThreadContext>;
   isMock?: boolean;
   onStart?: (threadId: string) => void;
   onFinish?: (state: AgentThreadState) => void;
@@ -57,7 +59,9 @@ function getStreamErrorMessage(error: unknown): string {
 
 export function useThreadStream({
   threadId,
+  assistantId = "lead_agent",
   context,
+  runtimeContextOverrides,
   isMock,
   onStart,
   onFinish,
@@ -112,7 +116,7 @@ export function useThreadStream({
 
   const thread = useStream<AgentThreadState>({
     client: getAPIClient(isMock),
-    assistantId: "lead_agent",
+    assistantId,
     threadId: onStreamThreadId,
     reconnectOnMount: true,
     fetchStateHistory: { limit: 1 },
@@ -368,7 +372,6 @@ export function useThreadStream({
               recursion_limit: 1000,
             },
             context: {
-              ...extraContext,
               ...context,
               thinking_enabled: context.mode !== "flash",
               is_plan_mode: context.mode === "pro" || context.mode === "ultra",
@@ -379,9 +382,11 @@ export function useThreadStream({
                   ? "high"
                   : context.mode === "pro"
                     ? "medium"
-                    : context.mode === "thinking"
+                  : context.mode === "thinking"
                       ? "low"
                       : undefined),
+              ...runtimeContextOverrides,
+              ...extraContext,
               thread_id: threadId,
             },
           },
@@ -395,7 +400,7 @@ export function useThreadStream({
         sendInFlightRef.current = false;
       }
     },
-    [thread, _handleOnStart, t.uploads.uploadingFiles, context, queryClient],
+    [thread, _handleOnStart, t.uploads.uploadingFiles, context, runtimeContextOverrides, queryClient],
   );
 
   // Merge thread with optimistic messages for display

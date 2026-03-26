@@ -1,31 +1,24 @@
-"""Configuration for LangGraph checkpointer."""
+"""Configuration for LangGraph checkpointer persistence."""
 
 from typing import Literal
 
 from pydantic import BaseModel, Field
 
-CheckpointerType = Literal["memory", "sqlite", "postgres"]
+CheckpointerType = Literal["postgres"]
 
 
 class CheckpointerConfig(BaseModel):
-    """Configuration for LangGraph state persistence checkpointer."""
+    """Configuration for LangGraph checkpoint persistence."""
 
     type: CheckpointerType = Field(
-        description="Checkpointer backend type. "
-        "'memory' is in-process only (lost on restart). "
-        "'sqlite' persists to a local file (requires langgraph-checkpoint-sqlite). "
-        "'postgres' persists to PostgreSQL (requires langgraph-checkpoint-postgres)."
+        default="postgres",
+        description="Checkpoint backend type. DeerFlow requires PostgreSQL-backed LangGraph checkpoints.",
     )
-    connection_string: str | None = Field(
-        default=None,
-        description="Connection string for sqlite (file path) or postgres (DSN). "
-        "Required for sqlite and postgres types. "
-        "For sqlite, use a file path like '.deer-flow/checkpoints.db' or ':memory:' for in-memory. "
-        "For postgres, use a DSN like 'postgresql://user:pass@localhost:5432/db'.",
+    connection_string: str = Field(
+        description="PostgreSQL DSN for LangGraph checkpoints.",
     )
 
 
-# Global configuration instance — None means no checkpointer is configured.
 _checkpointer_config: CheckpointerConfig | None = None
 
 

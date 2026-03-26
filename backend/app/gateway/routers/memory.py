@@ -57,7 +57,7 @@ class MemoryConfigResponse(BaseModel):
     """Response model for memory configuration."""
 
     enabled: bool = Field(..., description="Whether memory is enabled")
-    storage_path: str = Field(..., description="Path to memory storage file")
+    storage_path: str = Field(..., description="Legacy JSON import path used only for one-time migration/bootstrap")
     debounce_seconds: int = Field(..., description="Debounce time for memory updates")
     max_facts: int = Field(..., description="Maximum number of facts to store")
     fact_confidence_threshold: float = Field(..., description="Minimum confidence threshold for facts")
@@ -120,13 +120,10 @@ async def get_memory() -> MemoryResponse:
     "/memory/reload",
     response_model=MemoryResponse,
     summary="Reload Memory Data",
-    description="Reload memory data from the storage file, refreshing the in-memory cache.",
+    description="Reload memory data from LangGraph Store, applying one-time legacy JSON import if needed.",
 )
 async def reload_memory() -> MemoryResponse:
-    """Reload memory data from file.
-
-    This forces a reload of the memory data from the storage file,
-    useful when the file has been modified externally.
+    """Reload memory data from LangGraph Store.
 
     Returns:
         The reloaded memory data.

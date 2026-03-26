@@ -2,6 +2,20 @@ from datetime import datetime
 
 from deerflow.config.agents_config import load_agent_soul
 from deerflow.skills import load_skills
+from deerflow.subagents.builtins.project_delivery import (
+    PROJECT_DELIVERY_DEFAULT_AUTONOMY,
+    PROJECT_DELIVERY_SPECIALIST_SUMMARIES,
+    PROJECT_DELIVERY_TEAM_PROTOCOL,
+)
+
+
+def _build_specialist_catalog(*, include_fallbacks: bool) -> str:
+    lines = []
+    for name, summary in PROJECT_DELIVERY_SPECIALIST_SUMMARIES.items():
+        if not include_fallbacks and name in {"general-purpose", "bash"}:
+            continue
+        lines.append(f"- **{name}**: {summary}")
+    return "\n".join(lines)
 
 
 def _build_subagent_section(max_concurrent: int) -> str:
@@ -147,10 +161,94 @@ bash("npm test")  # Direct execution, not task()
 </subagent_system>"""
 
 
+def _build_project_delivery_team_section() -> str:
+    specialist_catalog = _build_specialist_catalog(include_fallbacks=False)
+    return f"""<project_delivery_team>
+You are the user-facing `lead-agent` for DeerFlow's hidden software project delivery team.
+
+{PROJECT_DELIVERY_DEFAULT_AUTONOMY}
+
+{PROJECT_DELIVERY_TEAM_PROTOCOL}
+
+When the user asks for software work, own the full delivery loop:
+1. Build or refresh an internal `ProjectBrief`
+2. Run research and architecture discovery before coding when requirements are still unstable
+3. Convert the scoped project into canonical `WorkOrder`s before implementation starts
+4. Route implementation to the narrowest specialist agents that can own the work
+5. Require `qa-agent` to issue a `GateDecision` before you say work is complete
+6. Use `delivery-agent` to package a release candidate in `/mnt/user-data/outputs`
+
+Hidden specialists available to you:
+{specialist_catalog}
+
+User communication rules:
+- The user only interacts with you, never directly with specialists
+- Do not expose internal delegation as a burden on the user; synthesize it into one coherent answer
+- Unless the user asks for the raw internal documents, keep `ProjectBrief`, `WorkOrder`, `AgentReport`, and `GateDecision` internal
+</project_delivery_team>"""
+
+
+def _build_project_delivery_subagent_section(max_concurrent: int) -> str:
+    n = max_concurrent
+    specialist_catalog = _build_specialist_catalog(include_fallbacks=True)
+    return f"""<subagent_system>
+**🚀 PROJECT DELIVERY TEAM MODE ACTIVE**
+
+You are `lead-agent`, the only user-visible coordinator. Use the hidden specialist team to research, plan, build, validate, and package software projects.
+
+**Primary Specialist Catalog**
+{specialist_catalog}
+
+**Dispatch Strategy**
+- Start with the smallest set of specialists that can safely move the project forward
+- First wave for ambiguous projects is usually: `discovery-agent`, `architect-agent`, and/or `planner-agent`
+- Builder wave uses the narrowest implementation owners: `design-agent`, `frontend-agent`, `backend-agent`, `integration-agent`, `data-agent`, `devops-agent`
+- Validation must pass through `qa-agent` before you claim completion
+- Packaging and handoff go through `delivery-agent`
+- In build / QA / delivery phases, dispatch only the current active batch and include `work_order_id`
+- Use `general-purpose` only as a fallback for cross-cutting work that does not fit a narrower specialist
+- Use `bash` only for terminal-heavy work such as git, build, test, or operational commands
+
+**⛔ HARD CONCURRENCY LIMIT: MAXIMUM {n} `task` CALLS PER RESPONSE**
+- You may include **at most {n}** `task` calls in one response. Excess calls are discarded.
+- If you need more than {n} specialists, batch them across turns.
+- Only run specialists in parallel when their work is independent or their write scopes do not overlap.
+- If two specialists would touch the same module or directory, serialize them instead of running them together.
+
+**Required Delivery Workflow for Complex Software Projects**
+1. Build an internal `ProjectBrief`
+2. Decide which specialists are needed right now
+3. Launch only the current batch (max {n})
+4. Synthesize results and decide the next batch
+5. Ensure a `GateDecision` from `qa-agent` before saying the work is done
+6. Package outputs with `delivery-agent` before final handoff when the task produces deliverables
+
+**When NOT to use subagents**
+- The task is a tiny direct action (single file read, one command, one obvious edit)
+- The task cannot be decomposed meaningfully
+- You need immediate user clarification before any safe progress is possible
+- The next step is a release, publish, or production mutation that requires user approval
+
+**Usage Example**
+```python
+# User asks: "Build a small SaaS dashboard MVP"
+# Batch 1: discovery + architecture + planning
+task(description="scope discovery", prompt="Create a ProjectBrief and research constraints for the dashboard MVP...", subagent_type="discovery-agent")
+task(description="system design", prompt="Map the MVP architecture, data flow, and interface boundaries...", subagent_type="architect-agent")
+task(description="execution plan", prompt="Turn the scoped MVP into WorkOrders with verification steps...", subagent_type="planner-agent")
+
+# Later batches: builders, then QA, then delivery
+task(description="api slice", prompt="Implement work order dashboard-api...", subagent_type="backend-agent", work_order_id="dashboard-api")
+```
+</subagent_system>"""
+
+
 SYSTEM_PROMPT_TEMPLATE = """
 <role>
 You are {agent_name}, an open-source super agent.
 </role>
+
+{project_delivery_section}
 
 {soul}
 {memory_context}
@@ -158,19 +256,21 @@ You are {agent_name}, an open-source super agent.
 <thinking_style>
 - Think concisely and strategically about the user's request BEFORE taking action
 - Break down the task: What is clear? What is ambiguous? What is missing?
-- **PRIORITY CHECK: If anything is unclear, missing, or has multiple interpretations, you MUST ask for clarification FIRST - do NOT proceed with work**
+- **PRIORITY CHECK: Resolve material ambiguity before committing to risky work. If the task is a software project and you can move forward safely with explicit assumptions, do so instead of blocking on unnecessary confirmation.**
+{project_delivery_thinking}
 {subagent_thinking}- Never write down your full final answer or report in thinking process, but only outline
 - CRITICAL: After thinking, you MUST provide your actual response to the user. Thinking is for planning, the response is for delivery.
 - Your response must contain the actual answer, not just a reference to what you thought about
 </thinking_style>
 
 <clarification_system>
+{project_delivery_autonomy}
 **WORKFLOW PRIORITY: CLARIFY → PLAN → ACT**
 1. **FIRST**: Analyze the request in your thinking - identify what's unclear, missing, or ambiguous
 2. **SECOND**: If clarification is needed, call `ask_clarification` tool IMMEDIATELY - do NOT start working
 3. **THIRD**: Only after all clarifications are resolved, proceed with planning and execution
 
-**CRITICAL RULE: Clarification ALWAYS comes BEFORE action. Never start working and clarify mid-execution.**
+**CRITICAL RULE: Clarification comes before action only when the ambiguity is material and cannot be resolved safely through local exploration or explicit assumptions. Never start risky work and clarify mid-execution.**
 
 **MANDATORY Clarification Scenarios - You MUST call ask_clarification BEFORE starting work when:**
 
@@ -322,7 +422,8 @@ combined with a FastAPI gateway for REST API access [citation:FastAPI](https://f
 </citations>
 
 <critical_reminders>
-- **Clarification First**: ALWAYS clarify unclear/missing/ambiguous requirements BEFORE starting work - never assume or guess
+- **Clarification Discipline**: Clarify material unknowns before risky work; otherwise keep assumptions explicit and maintain forward progress
+{project_delivery_reminder}
 {subagent_reminder}- Skill First: Always load the relevant skill before starting **complex** tasks.
 - Progressive Loading: Load resources incrementally as referenced in skills
 - Output Files: Final deliverables must be in `/mnt/user-data/outputs`
@@ -335,11 +436,12 @@ combined with a FastAPI gateway for REST API access [citation:FastAPI](https://f
 """
 
 
-def _get_memory_context(agent_name: str | None = None) -> str:
+def _get_memory_context(memory_scope: str | None = None) -> str:
     """Get memory context for injection into system prompt.
 
     Args:
-        agent_name: If provided, loads per-agent memory. If None, loads global memory.
+        memory_scope: If provided, loads memory from a dedicated namespace.
+            If None, loads global memory.
 
     Returns:
         Formatted memory context string wrapped in XML tags, or empty string if disabled.
@@ -352,7 +454,7 @@ def _get_memory_context(agent_name: str | None = None) -> str:
         if not config.enabled or not config.injection_enabled:
             return ""
 
-        memory_data = get_memory_data(agent_name)
+        memory_data = get_memory_data(memory_scope)
         memory_content = format_memory_for_injection(memory_data, max_tokens=config.max_injection_tokens)
 
         if not memory_content.strip():
@@ -444,30 +546,74 @@ def get_deferred_tools_prompt_section() -> str:
     return f"<available-deferred-tools>\n{names}\n</available-deferred-tools>"
 
 
-def apply_prompt_template(subagent_enabled: bool = False, max_concurrent_subagents: int = 3, *, agent_name: str | None = None, available_skills: set[str] | None = None) -> str:
+def apply_prompt_template(
+    subagent_enabled: bool = False,
+    max_concurrent_subagents: int = 3,
+    *,
+    agent_name: str | None = None,
+    memory_scope: str | None = None,
+    project_delivery_mode: bool = False,
+    available_skills: set[str] | None = None,
+) -> str:
     # Get memory context
-    memory_context = _get_memory_context(agent_name)
+    resolved_memory_scope = agent_name if memory_scope is None else memory_scope
+    memory_context = _get_memory_context(resolved_memory_scope)
+    is_project_lead = project_delivery_mode
 
     # Include subagent section only if enabled (from runtime parameter)
     n = max_concurrent_subagents
-    subagent_section = _build_subagent_section(n) if subagent_enabled else ""
+    if subagent_enabled:
+        subagent_section = _build_project_delivery_subagent_section(n) if is_project_lead else _build_subagent_section(n)
+    else:
+        subagent_section = ""
 
     # Add subagent reminder to critical_reminders if enabled
-    subagent_reminder = (
-        "- **Orchestrator Mode**: You are a task orchestrator - decompose complex tasks into parallel sub-tasks. "
-        f"**HARD LIMIT: max {n} `task` calls per response.** "
-        f"If >{n} sub-tasks, split into sequential batches of ≤{n}. Synthesize after ALL batches complete.\n"
-        if subagent_enabled
-        else ""
-    )
+    if subagent_enabled and is_project_lead:
+        subagent_reminder = (
+            "- **Project Team Orchestration**: For software projects, create a `ProjectBrief`, dispatch the narrowest specialist agents, "
+            f"respect the HARD LIMIT of {n} `task` calls per response, require `qa-agent` before completion, and use `delivery-agent` to package outputs.\n"
+        )
+    elif subagent_enabled:
+        subagent_reminder = (
+            "- **Orchestrator Mode**: You are a task orchestrator - decompose complex tasks into parallel sub-tasks. "
+            f"**HARD LIMIT: max {n} `task` calls per response.** "
+            f"If >{n} sub-tasks, split into sequential batches of ≤{n}. Synthesize after ALL batches complete.\n"
+        )
+    else:
+        subagent_reminder = ""
 
     # Add subagent thinking guidance if enabled
-    subagent_thinking = (
-        "- **DECOMPOSITION CHECK: Can this task be broken into 2+ parallel sub-tasks? If YES, COUNT them. "
-        f"If count > {n}, you MUST plan batches of ≤{n} and only launch the FIRST batch now. "
-        f"NEVER launch more than {n} `task` calls in one response.**\n"
-        if subagent_enabled
+    if subagent_enabled and is_project_lead:
+        subagent_thinking = (
+            "- **TEAM DISPATCH CHECK**: For software project work, identify whether you need discovery, architecture, planning, implementation, QA, or delivery specialists. "
+            f"If you need more than {n} specialists, batch them. Never run overlapping write scopes in parallel.\n"
+        )
+    elif subagent_enabled:
+        subagent_thinking = (
+            "- **DECOMPOSITION CHECK: Can this task be broken into 2+ parallel sub-tasks? If YES, COUNT them. "
+            f"If count > {n}, you MUST plan batches of ≤{n} and only launch the FIRST batch now. "
+            f"NEVER launch more than {n} `task` calls in one response.**\n"
+        )
+    else:
+        subagent_thinking = ""
+
+    project_delivery_section = _build_project_delivery_team_section() if is_project_lead else ""
+    project_delivery_thinking = (
+        "- **PROJECT DELIVERY LOOP**: When the user brings software work, think in the order `ProjectBrief -> WorkOrders -> implementation -> QA gate -> delivery pack`. Keep the user-facing response synthesized and concise.\n"
+        if is_project_lead
         else ""
+    )
+    project_delivery_autonomy = (
+        "**AUTONOMY DEFAULT FOR SOFTWARE PROJECTS:** Move the work forward without "
+        "step-by-step permission when the next step stays inside the local workspace "
+        "or clearly non-production systems. Ask the user before "
+        "release/publish/production mutations, missing credentials, or materially "
+        "different architectural tradeoffs.\n\n"
+        if is_project_lead
+        else ""
+    )
+    project_delivery_reminder = (
+        "- **Lead-Agent Role**: For software project work, you are the hidden team's only user-facing coordinator. Research, plan, build, test, and package a release candidate before calling the task complete.\n" if is_project_lead else ""
     )
 
     # Get skills section
@@ -478,7 +624,11 @@ def apply_prompt_template(subagent_enabled: bool = False, max_concurrent_subagen
 
     # Format the prompt with dynamic skills and memory
     prompt = SYSTEM_PROMPT_TEMPLATE.format(
-        agent_name=agent_name or "DeerFlow 2.0",
+        agent_name=agent_name or ("lead-agent" if is_project_lead else "DeerFlow 2.0"),
+        project_delivery_section=project_delivery_section,
+        project_delivery_thinking=project_delivery_thinking,
+        project_delivery_autonomy=project_delivery_autonomy,
+        project_delivery_reminder=project_delivery_reminder,
         soul=get_agent_soul(agent_name),
         skills_section=skills_section,
         deferred_tools_section=deferred_tools_section,

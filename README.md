@@ -95,6 +95,10 @@ DeerFlow has newly integrated the intelligent search and crawling toolset indepe
 
    This command creates local configuration files based on the provided example templates.
 
+   DeerFlow 2.x now requires PostgreSQL-backed LangGraph persistence. Set
+   `DEERFLOW_POSTGRES_DSN` in your shell or `.env`, and keep both
+   `checkpointer` and `store` in `config.yaml` pointed at that DSN.
+
 3. **Configure your preferred model(s)**
 
    Edit `config.yaml` and define at least one model:
@@ -227,6 +231,9 @@ make docker-start   # Start services (auto-detects sandbox mode from config.yaml
 ```
 
 `make docker-start` starts `provisioner` only when `config.yaml` uses provisioner mode (`sandbox.use: deerflow.community.aio_sandbox:AioSandboxProvider` with `provisioner_url`).
+The Docker dev stack now also starts a bundled PostgreSQL service and wires both
+the LangGraph checkpointer and LangGraph store to it automatically via
+`DEERFLOW_POSTGRES_DSN`.
 Backend processes automatically pick up `config.yaml` changes on the next config access, so model metadata updates do not require a manual restart during development.
 
 > [!TIP]
@@ -251,6 +258,7 @@ See [CONTRIBUTING.md](CONTRIBUTING.md) for detailed Docker development guide.
 If you prefer running services locally:
 
 Prerequisite: complete the "Configuration" steps above first (`make config` and model API keys). `make dev` requires a valid configuration file (defaults to `config.yaml` in the project root; can be overridden via `DEER_FLOW_CONFIG_PATH`).
+It also validates that PostgreSQL is reachable before starting LangGraph or the Gateway API.
 
 1. **Check prerequisites**:
    ```bash
@@ -478,6 +486,10 @@ Complex tasks rarely fit in a single pass. DeerFlow decomposes them.
 
 The lead agent can spawn sub-agents on the fly — each with its own scoped context, tools, and termination conditions. Sub-agents run in parallel when possible, report back structured results, and the lead agent synthesizes everything into a coherent output.
 
+When sub-agent mode is enabled for software work, DeerFlow's default `lead-agent` now behaves like a hidden **project delivery team lead**. It can route work to built-in specialists such as `discovery-agent`, `architect-agent`, `planner-agent`, `frontend-agent`, `backend-agent`, `integration-agent`, `qa-agent`, and `delivery-agent`, while keeping the user interaction unified through a single user-facing lead.
+
+The built-in team uses stable internal contracts such as `ProjectBrief`, `WorkOrder`, `AgentReport`, and `GateDecision` so research, planning, implementation, QA, and final packaging stay synchronized across sub-agents.
+
 This is how DeerFlow handles tasks that take minutes to hours: a research task might fan out into a dozen sub-agents, each exploring a different angle, then converge into a single report — or a website — or a slide deck with generated visuals. One harness, many hands.
 
 ### Sandbox & File System
@@ -508,6 +520,10 @@ Most agents forget everything the moment a conversation ends. DeerFlow remembers
 
 Across sessions, DeerFlow builds a persistent memory of your profile, preferences, and accumulated knowledge. The more you use it, the better it knows you — your writing style, your technical stack, your recurring workflows. Memory is stored locally and stays under your control.
 
+Under the hood, long-term memory now lives in LangGraph PostgresStore. Legacy
+`memory.json` files are treated as one-time import sources rather than the main
+runtime path.
+
 Memory updates now skip duplicate fact entries at apply time, so repeated preferences and context do not accumulate endlessly across sessions.
 
 ## Recommended Models
@@ -530,6 +546,13 @@ client = DeerFlowClient()
 
 # Chat
 response = client.chat("Analyze this paper for me", thread_id="my-thread")
+
+# Project Delivery OS
+project = client.create_project(
+    title="Project Delivery OS",
+    objective="Ship a Postgres-only project runtime"
+)
+reply = client.project_chat(project["project_id"], "Research the current architecture and produce a build plan.")
 
 # Streaming (LangGraph SSE protocol: values, messages-tuple, end)
 for event in client.stream("hello"):

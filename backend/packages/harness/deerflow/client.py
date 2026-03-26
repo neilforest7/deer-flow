@@ -33,13 +33,24 @@ from langchain_core.runnables import RunnableConfig
 
 from deerflow.agents.lead_agent.agent import _build_middlewares
 from deerflow.agents.lead_agent.prompt import apply_prompt_template
+from deerflow.agents.project_lead_agent import build_project_lead_graph
 from deerflow.agents.thread_state import ThreadState
 from deerflow.config.agents_config import AGENT_NAME_PATTERN
 from deerflow.config.app_config import get_app_config, reload_app_config
 from deerflow.config.extensions_config import ExtensionsConfig, SkillStateConfig, get_extensions_config, reload_extensions_config
 from deerflow.config.paths import get_paths
 from deerflow.models import create_chat_model
+from deerflow.projects import (
+    PROJECT_GRAPH_ID,
+    PROJECT_MEMORY_SCOPE,
+    apply_project_action_payload,
+    build_initial_project_state,
+    build_project_index,
+    compose_project_record,
+    create_project_id,
+)
 from deerflow.skills.installer import install_skill_from_archive
+from deerflow.store import DEFAULT_PROJECT_TEAM_NAME, ProjectStoreRepository, get_store
 from deerflow.uploads.manager import (
     claim_unique_filename,
     delete_file_safe,
@@ -149,6 +160,8 @@ class DeerFlowClient:
         # Lazy agent — created on first call, recreated when config changes.
         self._agent = None
         self._agent_config_key: tuple | None = None
+        self._project_agent = None
+        self._project_agent_config_key: tuple | None = None
 
     def reset_agent(self) -> None:
         """Force the internal agent to be recreated on the next call.
@@ -159,6 +172,8 @@ class DeerFlowClient:
         """
         self._agent = None
         self._agent_config_key = None
+        self._project_agent = None
+        self._project_agent_config_key = None
 
     # ------------------------------------------------------------------
     # Internal helpers
@@ -217,13 +232,20 @@ class DeerFlowClient:
         kwargs: dict[str, Any] = {
             "model": create_chat_model(name=model_name, thinking_enabled=thinking_enabled),
             "tools": self._get_tools(model_name=model_name, subagent_enabled=subagent_enabled),
-            "middleware": _build_middlewares(config, model_name=model_name, agent_name=self._agent_name),
+            "middleware": _build_middlewares(
+                config,
+                model_name=model_name,
+                agent_name=self._agent_name,
+                memory_scope=self._agent_name,
+            ),
             "system_prompt": apply_prompt_template(
                 subagent_enabled=subagent_enabled,
                 max_concurrent_subagents=max_concurrent_subagents,
                 agent_name=self._agent_name,
+                memory_scope=self._agent_name,
             ),
             "state_schema": ThreadState,
+            "store": get_store(),
         }
         checkpointer = self._checkpointer
         if checkpointer is None:
@@ -236,6 +258,30 @@ class DeerFlowClient:
         self._agent = create_agent(**kwargs)
         self._agent_config_key = key
         logger.info("Agent created: agent_name=%s, model=%s, thinking=%s", self._agent_name, model_name, thinking_enabled)
+
+    def _ensure_project_agent(self, config: RunnableConfig):
+        """Create (or recreate) the project delivery graph when config changes."""
+        cfg = config.get("configurable", {})
+        key = (
+            cfg.get("model_name"),
+            cfg.get("thinking_enabled"),
+            cfg.get("is_plan_mode"),
+            cfg.get("subagent_enabled"),
+            cfg.get("reasoning_effort"),
+        )
+
+        if self._project_agent is not None and self._project_agent_config_key == key:
+            return
+
+        checkpointer = self._checkpointer
+        if checkpointer is None:
+            from deerflow.agents.checkpointer import get_checkpointer
+
+            checkpointer = get_checkpointer()
+
+        self._project_agent = build_project_lead_graph(config, checkpointer=checkpointer)
+        self._project_agent_config_key = key
+        logger.info("Project agent created: assistant_id=%s, model=%s", PROJECT_GRAPH_ID, cfg.get("model_name"))
 
     @staticmethod
     def _get_tools(*, model_name: str | None, subagent_enabled: bool):
@@ -444,6 +490,175 @@ class DeerFlowClient:
         for event in self.stream(message, thread_id=thread_id, **kwargs):
             if event.type == "messages-tuple" and event.data.get("type") == "ai":
                 content = event.data.get("content", "")
+                if content:
+                    last_text = content
+        return last_text
+
+    def create_project(
+        self,
+        *,
+        title: str,
+        objective: str | None = None,
+        team_name: str = DEFAULT_PROJECT_TEAM_NAME,
+        project_id: str | None = None,
+    ) -> dict[str, Any]:
+        """Create a new project record backed by LangGraph Store."""
+        repo = ProjectStoreRepository(get_store())
+        repo.ensure_default_team()
+        if repo.get_team(team_name) is None:
+            raise ValueError(f"Unknown project team '{team_name}'")
+
+        project_id = project_id or create_project_id()
+        thread_id = project_id
+        initial_state = build_initial_project_state(
+            project_id=project_id,
+            title=title,
+            objective=objective,
+            team_name=team_name,
+        )
+        repo.put_project_index(
+            project_id,
+            build_project_index(
+                project_id=project_id,
+                thread_id=thread_id,
+                title=title,
+                objective=objective,
+                team_name=team_name,
+            ),
+        )
+        repo.put_project_snapshot(
+            project_id,
+            {
+                "project_title": title,
+                "project_brief": initial_state["project_brief"],
+                "work_orders": [],
+                "agent_reports": [],
+                "gate_decision": None,
+                "delivery_pack": None,
+                "active_batch": None,
+                "artifacts": [],
+            },
+        )
+        repo.put_project_control(project_id, initial_state["control_flags"])
+        return self.get_project(project_id)
+
+    def list_projects(self, *, limit: int = 100, offset: int = 0) -> dict[str, Any]:
+        """List project records from LangGraph Store."""
+        repo = ProjectStoreRepository(get_store())
+        repo.ensure_default_team()
+        projects = []
+        for item in repo.list_projects(limit=limit, offset=offset):
+            control_flags = repo.get_project_control(item["project_id"])
+            snapshot = repo.get_project_snapshot(item["project_id"])
+            projects.append(
+                compose_project_record(
+                    item,
+                    snapshot=snapshot,
+                    control_flags=control_flags,
+                )
+            )
+        return {"projects": projects}
+
+    def get_project(self, project_id: str) -> dict[str, Any]:
+        """Get a full project record from LangGraph Store."""
+        repo = ProjectStoreRepository(get_store())
+        index = repo.get_project_index(project_id)
+        if index is None:
+            raise KeyError(f"Unknown project '{project_id}'")
+
+        snapshot = repo.get_project_snapshot(project_id)
+        control_flags = repo.get_project_control(project_id)
+        return compose_project_record(
+            index,
+            snapshot=snapshot,
+            control_flags=control_flags,
+        )
+
+    def control_project(self, project_id: str, action: str) -> dict[str, Any]:
+        """Apply a control action to a project."""
+        repo = ProjectStoreRepository(get_store())
+        project = self.get_project(project_id)
+        index = repo.get_project_index(project_id)
+        if index is None:
+            raise KeyError(f"Unknown project '{project_id}'")
+
+        previous_control = repo.get_project_control(project_id)
+        if action == "resume" and (
+            previous_control.get("abort_requested")
+            or project.get("status") == "aborted"
+            or project.get("phase") == "closed"
+        ):
+            raise ValueError("Aborted projects cannot be resumed")
+
+        updated_control = apply_project_action_payload(
+            previous_control,
+            action,
+        )
+        repo.put_project_control(project_id, updated_control)
+        should_resume_run = (
+            action == "resume"
+            and bool(previous_control.get("pause_requested"))
+            and project.get("status") == "paused"
+        )
+        if should_resume_run:
+            try:
+                thread_id = str(index["thread_id"])
+                config = self._get_runnable_config(thread_id, subagent_enabled=True)
+                config["configurable"]["project_id"] = project_id
+                config["configurable"]["thread_id"] = thread_id
+                self._ensure_project_agent(config)
+                self._project_agent.invoke(  # type: ignore[union-attr]
+                    {
+                        "project_id": project_id,
+                        "project_phase": project.get("phase", "intake"),
+                        "messages": [],
+                    },
+                    config=config,
+                    context={
+                        "thread_id": thread_id,
+                        "project_id": project_id,
+                        "agent_name": PROJECT_MEMORY_SCOPE,
+                    },
+                )
+            except Exception:
+                repo.put_project_control(project_id, previous_control)
+                raise
+        return self.get_project(project_id)
+
+    def project_chat(self, project_id: str, message: str, **kwargs) -> str:
+        """Send one message to the local project delivery runtime."""
+        project = self.get_project(project_id)
+        thread_id = str(project["thread_id"])
+        config = self._get_runnable_config(
+            thread_id,
+            **{
+                **kwargs,
+                "subagent_enabled": True,
+            },
+        )
+        config["configurable"]["project_id"] = project_id
+        config["configurable"]["thread_id"] = thread_id
+        self._ensure_project_agent(config)
+
+        context = {
+            "thread_id": thread_id,
+            "project_id": project_id,
+            "agent_name": PROJECT_MEMORY_SCOPE,
+        }
+        result = self._project_agent.invoke(
+            {
+                "project_id": project_id,
+                "project_phase": project.get("phase", "intake"),
+                "messages": [HumanMessage(content=message)],
+            },
+            config=config,
+            context=context,
+        )
+
+        last_text = ""
+        for item in result.get("messages", []):
+            if isinstance(item, AIMessage):
+                content = self._extract_text(item.content)
                 if content:
                     last_text = content
         return last_text

@@ -15,12 +15,13 @@ from deerflow.agents.memory.prompt import (
 from deerflow.config.memory_config import get_memory_config
 from deerflow.config.paths import get_paths
 from deerflow.models import create_chat_model
+from deerflow.store import MemoryStoreRepository, get_store
 
 logger = logging.getLogger(__name__)
 
 
 def _get_memory_file_path(agent_name: str | None = None) -> Path:
-    """Get the path to the memory file.
+    """Get the legacy path to the memory file used for one-time migration.
 
     Args:
         agent_name: If provided, returns the per-agent memory file path.
@@ -59,16 +60,8 @@ def _create_empty_memory() -> dict[str, Any]:
     }
 
 
-# Per-agent memory cache: keyed by agent_name (None = global)
-# Value: (memory_data, file_mtime)
-_memory_cache: dict[str | None, tuple[dict[str, Any], float | None]] = {}
-
-
 def get_memory_data(agent_name: str | None = None) -> dict[str, Any]:
-    """Get the current memory data (cached with file modification time check).
-
-    The cache is automatically invalidated if the memory file has been modified
-    since the last load, ensuring fresh data is always returned.
+    """Get the current memory data from the configured LangGraph store.
 
     Args:
         agent_name: If provided, loads per-agent memory. If None, loads global memory.
@@ -76,27 +69,23 @@ def get_memory_data(agent_name: str | None = None) -> dict[str, Any]:
     Returns:
         The memory data dictionary.
     """
-    file_path = _get_memory_file_path(agent_name)
-
-    # Get current file modification time
-    try:
-        current_mtime = file_path.stat().st_mtime if file_path.exists() else None
-    except OSError:
-        current_mtime = None
-
-    cached = _memory_cache.get(agent_name)
-
-    # Invalidate cache if file has been modified or doesn't exist
-    if cached is None or cached[1] != current_mtime:
-        memory_data = _load_memory_from_file(agent_name)
-        _memory_cache[agent_name] = (memory_data, current_mtime)
+    repository = MemoryStoreRepository(get_store())
+    memory_data = repository.get_memory(agent_name)
+    if memory_data is not None:
         return memory_data
 
-    return cached[0]
+    # One-time migration path from the legacy JSON file into the store.
+    migrated = _load_memory_from_file(agent_name)
+    if _is_empty_memory(migrated):
+        return migrated
+
+    repository.put_memory(migrated, agent_name)
+    logger.info("Migrated legacy memory profile for agent=%s into LangGraph store", agent_name or "global")
+    return migrated
 
 
 def reload_memory_data(agent_name: str | None = None) -> dict[str, Any]:
-    """Reload memory data from file, forcing cache invalidation.
+    """Reload memory data from the store.
 
     Args:
         agent_name: If provided, reloads per-agent memory. If None, reloads global memory.
@@ -104,16 +93,7 @@ def reload_memory_data(agent_name: str | None = None) -> dict[str, Any]:
     Returns:
         The reloaded memory data dictionary.
     """
-    file_path = _get_memory_file_path(agent_name)
-    memory_data = _load_memory_from_file(agent_name)
-
-    try:
-        mtime = file_path.stat().st_mtime if file_path.exists() else None
-    except OSError:
-        mtime = None
-
-    _memory_cache[agent_name] = (memory_data, mtime)
-    return memory_data
+    return get_memory_data(agent_name)
 
 
 def _extract_text(content: Any) -> str:
@@ -176,6 +156,21 @@ def _load_memory_from_file(agent_name: str | None = None) -> dict[str, Any]:
         return _create_empty_memory()
 
 
+def _is_empty_memory(memory_data: dict[str, Any]) -> bool:
+    """Check whether a memory payload is effectively empty."""
+    if not memory_data:
+        return True
+    if memory_data.get("facts"):
+        return False
+
+    for section_name in ("user", "history"):
+        section = memory_data.get(section_name, {})
+        if any(isinstance(value, dict) and value.get("summary") for value in section.values()):
+            return False
+
+    return True
+
+
 # Matches sentences that describe a file-upload *event* rather than general
 # file-related work.  Deliberately narrow to avoid removing legitimate facts
 # such as "User works with CSV files" or "prefers PDF export".
@@ -223,7 +218,7 @@ def _fact_content_key(content: Any) -> str | None:
 
 
 def _save_memory_to_file(memory_data: dict[str, Any], agent_name: str | None = None) -> bool:
-    """Save memory data to file and update cache.
+    """Persist memory data to the configured LangGraph store.
 
     Args:
         memory_data: The memory data to save.
@@ -232,35 +227,12 @@ def _save_memory_to_file(memory_data: dict[str, Any], agent_name: str | None = N
     Returns:
         True if successful, False otherwise.
     """
-    file_path = _get_memory_file_path(agent_name)
-
     try:
-        # Ensure directory exists
-        file_path.parent.mkdir(parents=True, exist_ok=True)
-
-        # Update lastUpdated timestamp
-        memory_data["lastUpdated"] = datetime.utcnow().isoformat() + "Z"
-
-        # Write atomically using temp file
-        temp_path = file_path.with_suffix(".tmp")
-        with open(temp_path, "w", encoding="utf-8") as f:
-            json.dump(memory_data, f, indent=2, ensure_ascii=False)
-
-        # Rename temp file to actual file (atomic on most systems)
-        temp_path.replace(file_path)
-
-        # Update cache and file modification time
-        try:
-            mtime = file_path.stat().st_mtime
-        except OSError:
-            mtime = None
-
-        _memory_cache[agent_name] = (memory_data, mtime)
-
-        logger.info("Memory saved to %s", file_path)
+        MemoryStoreRepository(get_store()).put_memory(memory_data, agent_name)
+        logger.info("Memory saved to LangGraph store for agent=%s", agent_name or "global")
         return True
-    except OSError as e:
-        logger.error("Failed to save memory file: %s", e)
+    except Exception as e:
+        logger.error("Failed to save memory to store: %s", e)
         return False
 
 

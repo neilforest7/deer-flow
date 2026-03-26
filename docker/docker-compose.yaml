@@ -22,6 +22,24 @@
 # Access: http://localhost:${PORT:-2026}
 
 services:
+  postgres:
+    image: postgres:16-alpine
+    container_name: deer-flow-postgres
+    environment:
+      POSTGRES_DB: ${DEERFLOW_POSTGRES_DB:-deerflow}
+      POSTGRES_USER: ${DEERFLOW_POSTGRES_USER:-deerflow}
+      POSTGRES_PASSWORD: ${DEERFLOW_POSTGRES_PASSWORD:-deerflow}
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${DEERFLOW_POSTGRES_USER:-deerflow} -d ${DEERFLOW_POSTGRES_DB:-deerflow}"]
+      interval: 5s
+      timeout: 5s
+      retries: 20
+    volumes:
+      - postgres-data:/var/lib/postgresql/data
+    networks:
+      - deer-flow
+    restart: unless-stopped
+
   # ── Reverse Proxy ──────────────────────────────────────────────────────────
   nginx:
     image: nginx:alpine
@@ -90,8 +108,12 @@ services:
       - DEER_FLOW_HOST_BASE_DIR=${DEER_FLOW_HOME}
       - DEER_FLOW_HOST_SKILLS_PATH=${DEER_FLOW_REPO_ROOT}/skills
       - DEER_FLOW_SANDBOX_HOST=host.docker.internal
+      - DEERFLOW_POSTGRES_DSN=postgresql://${DEERFLOW_POSTGRES_USER:-deerflow}:${DEERFLOW_POSTGRES_PASSWORD:-deerflow}@postgres:5432/${DEERFLOW_POSTGRES_DB:-deerflow}
     env_file:
       - ../.env
+    depends_on:
+      postgres:
+        condition: service_healthy
     extra_hosts:
       - "host.docker.internal:host-gateway"
     networks:
@@ -136,11 +158,15 @@ services:
       - DEER_FLOW_HOST_BASE_DIR=${DEER_FLOW_HOME}
       - DEER_FLOW_HOST_SKILLS_PATH=${DEER_FLOW_REPO_ROOT}/skills
       - DEER_FLOW_SANDBOX_HOST=host.docker.internal
+      - DEERFLOW_POSTGRES_DSN=postgresql://${DEERFLOW_POSTGRES_USER:-deerflow}:${DEERFLOW_POSTGRES_PASSWORD:-deerflow}@postgres:5432/${DEERFLOW_POSTGRES_DB:-deerflow}
       # Disable LangSmith tracing — LANGSMITH_API_KEY is not required.
       # Set LANGCHAIN_TRACING_V2=true and LANGSMITH_API_KEY in .env to enable.
       - LANGCHAIN_TRACING_V2=${LANGCHAIN_TRACING_V2:-false}
     env_file:
       - ../.env
+    depends_on:
+      postgres:
+        condition: service_healthy
     extra_hosts:
       - "host.docker.internal:host-gateway"
     networks:
@@ -180,3 +206,5 @@ services:
 networks:
   deer-flow:
     driver: bridge
+volumes:
+  postgres-data:

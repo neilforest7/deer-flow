@@ -14,6 +14,7 @@ from deerflow.config.memory_config import load_memory_config_from_dict
 from deerflow.config.model_config import ModelConfig
 from deerflow.config.sandbox_config import SandboxConfig
 from deerflow.config.skills_config import SkillsConfig
+from deerflow.config.store_config import StoreConfig, load_store_config_from_dict
 from deerflow.config.subagents_config import load_subagents_config_from_dict
 from deerflow.config.summarization_config import load_summarization_config_from_dict
 from deerflow.config.title_config import load_title_config_from_dict
@@ -40,6 +41,7 @@ class AppConfig(BaseModel):
     tool_search: ToolSearchConfig = Field(default_factory=ToolSearchConfig, description="Tool search / deferred loading configuration")
     model_config = ConfigDict(extra="allow", frozen=False)
     checkpointer: CheckpointerConfig | None = Field(default=None, description="Checkpointer configuration")
+    store: StoreConfig | None = Field(default=None, description="LangGraph store configuration")
 
     @classmethod
     def resolve_config_path(cls, config_path: str | None = None) -> Path:
@@ -119,11 +121,25 @@ class AppConfig(BaseModel):
         if "checkpointer" in config_data:
             load_checkpointer_config_from_dict(config_data["checkpointer"])
 
+        # Load store config if present
+        if "store" in config_data:
+            load_store_config_from_dict(config_data["store"])
+
         # Load extensions config separately (it's in a different file)
         extensions_config = ExtensionsConfig.from_file()
         config_data["extensions"] = extensions_config.model_dump()
 
         result = cls.model_validate(config_data)
+        if result.checkpointer is None:
+            raise ValueError(
+                "checkpointer configuration is required. Configure checkpointer.type=postgres "
+                "and checkpointer.connection_string in config.yaml."
+            )
+        if result.store is None:
+            raise ValueError(
+                "store configuration is required. Configure store.type=postgres "
+                "and store.connection_string in config.yaml."
+            )
         return result
 
     @classmethod

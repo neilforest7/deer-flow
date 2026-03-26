@@ -164,6 +164,7 @@ export const enUS: Translations = {
     recentChats: "Recent chats",
     demoChats: "Demo chats",
     agents: "Agents",
+    projects: "Projects",
   },
 
   // Agents
@@ -204,6 +205,7 @@ export const enUS: Translations = {
   breadcrumb: {
     workspace: "Workspace",
     chats: "Chats",
+    projects: "Projects",
   },
 
   // Workspace

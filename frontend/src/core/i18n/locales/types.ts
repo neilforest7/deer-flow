@@ -109,6 +109,7 @@ export interface Translations {
     chats: string;
     demoChats: string;
     agents: string;
+    projects: string;
   };
 
   // Agents
@@ -142,6 +143,7 @@ export interface Translations {
   breadcrumb: {
     workspace: string;
     chats: string;
+    projects: string;
   };
 
   // Workspace

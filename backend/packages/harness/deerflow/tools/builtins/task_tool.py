@@ -13,9 +13,28 @@ from langgraph.typing import ContextT
 from deerflow.agents.lead_agent.prompt import get_skills_prompt_section
 from deerflow.agents.thread_state import ThreadState
 from deerflow.subagents import SubagentExecutor, get_subagent_config
+from deerflow.subagents.builtins import BUILTIN_SUBAGENTS
 from deerflow.subagents.executor import SubagentStatus, cleanup_background_task, get_background_task_result
 
 logger = logging.getLogger(__name__)
+
+SubagentType = Literal[
+    "general-purpose",
+    "bash",
+    "discovery-agent",
+    "architect-agent",
+    "planner-agent",
+    "design-agent",
+    "frontend-agent",
+    "backend-agent",
+    "integration-agent",
+    "data-agent",
+    "devops-agent",
+    "qa-agent",
+    "delivery-agent",
+]
+
+AVAILABLE_SUBAGENT_TYPES = tuple(BUILTIN_SUBAGENTS.keys())
 
 
 @tool("task", parse_docstring=True)
@@ -23,8 +42,9 @@ def task_tool(
     runtime: ToolRuntime[ContextT, ThreadState],
     description: str,
     prompt: str,
-    subagent_type: Literal["general-purpose", "bash"],
+    subagent_type: SubagentType,
     tool_call_id: Annotated[str, InjectedToolCallId],
+    work_order_id: str | None = None,
     max_turns: int | None = None,
 ) -> str:
     """Delegate a task to a specialized subagent that runs in its own context.
@@ -35,11 +55,19 @@ def task_tool(
     - Execute commands or operations in isolated contexts
 
     Available subagent types:
-    - **general-purpose**: A capable agent for complex, multi-step tasks that require
-      both exploration and action. Use when the task requires complex reasoning,
-      multiple dependent steps, or would benefit from isolated context.
-    - **bash**: Command execution specialist for running bash commands. Use for
-      git operations, build processes, or when command output would be verbose.
+    - **general-purpose**: Fallback subagent for cross-cutting work that does not fit a narrower specialist.
+    - **bash**: Command execution specialist for terminal-heavy work.
+    - **discovery-agent**: Research, requirement discovery, feasibility, and source gathering.
+    - **architect-agent**: Architecture, interfaces, boundaries, and technical design.
+    - **planner-agent**: Execution plans, work orders, and milestone decomposition.
+    - **design-agent**: Product design direction, UX structure, and visual guidance.
+    - **frontend-agent**: Frontend implementation and browser-facing fixes.
+    - **backend-agent**: Backend implementation, services, APIs, and business logic.
+    - **integration-agent**: External APIs, auth, SDKs, messaging, automation, and MCP boundaries.
+    - **data-agent**: ETL, analytics, evaluation, and schema-heavy workflows.
+    - **devops-agent**: CI/CD, containers, infrastructure, deployment plumbing, and observability.
+    - **qa-agent**: Validation, regression checks, reviews, and release gate decisions.
+    - **delivery-agent**: Packaging outputs and handoff artifacts into a release candidate.
 
     When to use this tool:
     - Complex tasks requiring multiple steps or tools
@@ -55,12 +83,15 @@ def task_tool(
         description: A short (3-5 word) description of the task for logging/display. ALWAYS PROVIDE THIS PARAMETER FIRST.
         prompt: The task description for the subagent. Be specific and clear about what needs to be done. ALWAYS PROVIDE THIS PARAMETER SECOND.
         subagent_type: The type of subagent to use. ALWAYS PROVIDE THIS PARAMETER THIRD.
+        work_order_id: Optional stable project work-order identifier. Required by `project_lead_agent`
+            during build / QA / delivery phases so dispatch stays aligned with the active batch.
         max_turns: Optional maximum number of agent turns. Defaults to subagent's configured max.
     """
     # Get subagent configuration
     config = get_subagent_config(subagent_type)
     if config is None:
-        return f"Error: Unknown subagent type '{subagent_type}'. Available: general-purpose, bash"
+        available = ", ".join(AVAILABLE_SUBAGENT_TYPES)
+        return f"Error: Unknown subagent type '{subagent_type}'. Available: {available}"
 
     # Build config overrides
     overrides: dict = {}

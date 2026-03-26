@@ -1,11 +1,19 @@
 "use client";
 
 import { PromptInputProvider } from "@/components/ai-elements/prompt-input";
+import { ArtifactsProvider } from "@/components/workspace/artifacts";
+import { SubtasksProvider } from "@/core/tasks/context";
 
 export default function ProjectDetailLayout({
   children,
 }: {
   children: React.ReactNode;
 }) {
-  return <PromptInputProvider>{children}</PromptInputProvider>;
+  return (
+    <SubtasksProvider>
+      <ArtifactsProvider>
+        <PromptInputProvider>{children}</PromptInputProvider>
+      </ArtifactsProvider>
+    </SubtasksProvider>
+  );
 }

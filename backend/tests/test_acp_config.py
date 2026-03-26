@@ -99,9 +99,12 @@ def test_app_config_reload_without_acp_agents_clears_previous_state(tmp_path, mo
     config_path = tmp_path / "config.yaml"
     extensions_path = tmp_path / "extensions_config.json"
     extensions_path.write_text(json.dumps({"mcpServers": {}, "skills": {}}), encoding="utf-8")
+    postgres_dsn = "postgresql://postgres:postgres@localhost:5432/deerflow"
 
     config_with_acp = {
         "sandbox": {"use": "deerflow.sandbox.local:LocalSandboxProvider"},
+        "checkpointer": {"type": "postgres", "connection_string": postgres_dsn},
+        "store": {"type": "postgres", "connection_string": postgres_dsn},
         "models": [
             {
                 "name": "test-model",
@@ -119,6 +122,8 @@ def test_app_config_reload_without_acp_agents_clears_previous_state(tmp_path, mo
     }
     config_without_acp = {
         "sandbox": {"use": "deerflow.sandbox.local:LocalSandboxProvider"},
+        "checkpointer": {"type": "postgres", "connection_string": postgres_dsn},
+        "store": {"type": "postgres", "connection_string": postgres_dsn},
         "models": [
             {
                 "name": "test-model",

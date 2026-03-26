@@ -1,7 +1,7 @@
 "use client";
 
-import { useCallback, useEffect } from "react";
 import { useParams } from "next/navigation";
+import { useCallback, useEffect } from "react";
 import { toast } from "sonner";
 
 import { type PromptInputMessage } from "@/components/ai-elements/prompt-input";

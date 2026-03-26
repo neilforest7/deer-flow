@@ -80,8 +80,9 @@ def test_make_lead_agent_disables_thinking_when_model_does_not_support_it(monkey
     import deerflow.tools as tools_module
 
     monkeypatch.setattr(lead_agent_module, "get_app_config", lambda: app_config)
+    monkeypatch.setattr(lead_agent_module, "get_store", lambda: object())
     monkeypatch.setattr(tools_module, "get_available_tools", lambda **kwargs: [])
-    monkeypatch.setattr(lead_agent_module, "_build_middlewares", lambda config, model_name, agent_name=None: [])
+    monkeypatch.setattr(lead_agent_module, "_build_middlewares", lambda *args, **kwargs: [])
 
     captured: dict[str, object] = {}
 

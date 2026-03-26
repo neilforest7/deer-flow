@@ -159,7 +159,7 @@ def build_project_lead_graph(
         return phase
 
     def _build_phase_node(phase: str):
-        def _run_phase(
+        async def _run_phase(
             state: ProjectState,
             runtime: Runtime[dict[str, Any]],
             config: RunnableConfig,
@@ -174,7 +174,7 @@ def build_project_lead_graph(
             project_state.update(projection)
             project_state["project_phase"] = phase
             project_state.setdefault("project_status", "draft" if phase == "intake" else "active")
-            return phase_agents[phase].invoke(
+            return await phase_agents[phase].ainvoke(
                 project_state,
                 config=config,
                 context=runtime.context,

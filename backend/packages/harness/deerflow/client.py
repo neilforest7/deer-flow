@@ -284,6 +284,34 @@ class DeerFlowClient:
         logger.info("Project agent created: assistant_id=%s, model=%s", PROJECT_GRAPH_ID, cfg.get("model_name"))
 
     @staticmethod
+    def _invoke_project_agent_sync(
+        agent: Any,
+        payload: dict[str, Any],
+        *,
+        config: RunnableConfig,
+        context: dict[str, Any],
+    ) -> dict[str, Any]:
+        try:
+            return agent.invoke(
+                payload,
+                config=config,
+                context=context,
+            )
+        except (NotImplementedError, TypeError) as exc:
+            message = str(exc)
+            ainvoke = getattr(agent, "ainvoke", None)
+            sync_not_supported = isinstance(exc, NotImplementedError) or "No synchronous function provided" in message
+            if not sync_not_supported or not callable(ainvoke):
+                raise
+            return asyncio.run(
+                ainvoke(
+                    payload,
+                    config=config,
+                    context=context,
+                )
+            )
+
+    @staticmethod
     def _get_tools(*, model_name: str | None, subagent_enabled: bool):
         """Lazy import to avoid circular dependency at module level."""
         from deerflow.tools import get_available_tools
@@ -607,7 +635,8 @@ class DeerFlowClient:
                 config["configurable"]["project_id"] = project_id
                 config["configurable"]["thread_id"] = thread_id
                 self._ensure_project_agent(config)
-                self._project_agent.invoke(  # type: ignore[union-attr]
+                self._invoke_project_agent_sync(
+                    self._project_agent,
                     {
                         "project_id": project_id,
                         "project_phase": project.get("phase", "intake"),
@@ -645,7 +674,8 @@ class DeerFlowClient:
             "project_id": project_id,
             "agent_name": PROJECT_MEMORY_SCOPE,
         }
-        result = self._project_agent.invoke(
+        result = self._invoke_project_agent_sync(
+            self._project_agent,
             {
                 "project_id": project_id,
                 "project_phase": project.get("phase", "intake"),

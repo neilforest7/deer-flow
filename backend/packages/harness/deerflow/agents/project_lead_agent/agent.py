@@ -159,19 +159,24 @@ def build_project_lead_graph(
         return phase
 
     def _build_phase_node(phase: str):
-        def _run_phase(state: ProjectState, runtime: Runtime[dict[str, Any]]) -> dict[str, Any]:
+        def _run_phase(
+            state: ProjectState,
+            runtime: Runtime[dict[str, Any]],
+            config: RunnableConfig,
+        ) -> dict[str, Any]:
             project_state = dict(state)
+            configurable = (config.get("configurable", {}) or {}) if config else {}
             projection = compute_project_state_projection(
                 project_state,
                 control_flags=project_state.get("control_flags"),
-                max_parallelism=int((runtime.config.get("configurable", {}) or {}).get("max_concurrent_subagents", 3)),
+                max_parallelism=int(configurable.get("max_concurrent_subagents", 3)),
             )
             project_state.update(projection)
             project_state["project_phase"] = phase
             project_state.setdefault("project_status", "draft" if phase == "intake" else "active")
             return phase_agents[phase].invoke(
                 project_state,
-                config=runtime.config,
+                config=config,
                 context=runtime.context,
             )
 

@@ -7,6 +7,7 @@ from collections.abc import Awaitable, Callable
 from typing import Any, override
 
 from langchain.agents.middleware import AgentMiddleware
+from langgraph.config import get_config
 from langchain_core.messages import ToolMessage
 from langgraph.prebuilt.tool_node import ToolCallRequest
 from langgraph.runtime import Runtime
@@ -23,6 +24,17 @@ from deerflow.store import DEFAULT_PROJECT_TEAM_NAME, ProjectStoreRepository, ge
 logger = logging.getLogger(__name__)
 
 
+def _current_runnable_config(runtime: Runtime | None = None) -> dict[str, Any]:
+    runtime_config = getattr(runtime, "config", None)
+    if isinstance(runtime_config, dict):
+        return runtime_config
+    try:
+        config = get_config()
+    except RuntimeError:
+        return {}
+    return config if isinstance(config, dict) else {}
+
+
 class ProjectDispatchMiddleware(AgentMiddleware[ProjectState]):
     """Keep project specialist dispatch aligned with the planned active batch."""
 
@@ -31,7 +43,8 @@ class ProjectDispatchMiddleware(AgentMiddleware[ProjectState]):
     def _resolve_parallelism(self, state: ProjectState, runtime: Runtime | None) -> int:
         configured_parallelism = 3
         if runtime is not None:
-            configured_parallelism = int((runtime.config.get("configurable", {}) or {}).get("max_concurrent_subagents", 3))
+            config = _current_runnable_config(runtime)
+            configured_parallelism = int((config.get("configurable", {}) or {}).get("max_concurrent_subagents", 3))
 
         team_name = str(state.get("team_name") or DEFAULT_PROJECT_TEAM_NAME)
         team = ProjectStoreRepository(get_store()).get_team(team_name) or {}

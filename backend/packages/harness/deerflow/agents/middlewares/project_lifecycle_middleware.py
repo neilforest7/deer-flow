@@ -5,6 +5,7 @@ from __future__ import annotations
 from typing import Any, override
 
 from langchain.agents.middleware import AgentMiddleware
+from langgraph.config import get_config
 from langgraph.runtime import Runtime
 
 from deerflow.agents.project_state import ProjectState
@@ -38,6 +39,17 @@ def _default_project_brief(title: str) -> dict[str, Any]:
     }
 
 
+def _current_runnable_config(runtime: Runtime | None = None) -> dict[str, Any]:
+    runtime_config = getattr(runtime, "config", None)
+    if isinstance(runtime_config, dict):
+        return runtime_config
+    try:
+        config = get_config()
+    except RuntimeError:
+        return {}
+    return config if isinstance(config, dict) else {}
+
+
 class ProjectLifecycleMiddleware(AgentMiddleware[ProjectState]):
     """Sync project runtime state into LangGraph state + store snapshots."""
 
@@ -45,7 +57,8 @@ class ProjectLifecycleMiddleware(AgentMiddleware[ProjectState]):
 
     def _resolve_parallelism(self, state: ProjectState, runtime: Runtime) -> int:
         repo = ProjectStoreRepository(get_store())
-        configured_parallelism = int((runtime.config.get("configurable", {}) or {}).get("max_concurrent_subagents", 3))
+        config = _current_runnable_config(runtime)
+        configured_parallelism = int((config.get("configurable", {}) or {}).get("max_concurrent_subagents", 3))
         team_name = str(state.get("team_name") or DEFAULT_PROJECT_TEAM_NAME)
         team = repo.get_team(team_name) or {}
         routing_policy = team.get("routing_policy")
@@ -61,7 +74,7 @@ class ProjectLifecycleMiddleware(AgentMiddleware[ProjectState]):
         context = runtime.context or {}
         if context.get("project_id"):
             return str(context["project_id"])
-        config = runtime.config.get("configurable", {}) if runtime.config else {}
+        config = _current_runnable_config(runtime).get("configurable", {})
         if config.get("project_id"):
             return str(config["project_id"])
         return None
@@ -70,7 +83,7 @@ class ProjectLifecycleMiddleware(AgentMiddleware[ProjectState]):
         context = runtime.context or {}
         if context.get("thread_id"):
             return str(context["thread_id"])
-        config = runtime.config.get("configurable", {}) if runtime.config else {}
+        config = _current_runnable_config(runtime).get("configurable", {})
         if config.get("thread_id"):
             return str(config["thread_id"])
         return None

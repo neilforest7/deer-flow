@@ -4,11 +4,13 @@ from unittest.mock import patch
 from langchain_core.messages import AIMessage, ToolMessage
 
 from deerflow.agents.middlewares.project_dispatch_middleware import ProjectDispatchMiddleware
+from deerflow.agents.middlewares.project_lifecycle_middleware import ProjectLifecycleMiddleware
 from deerflow.projects import (
     compute_project_state_projection,
     merge_canonical_work_orders,
     select_active_batch,
 )
+from deerflow.store import ProjectStoreRepository
 
 
 class _StoreItem:
@@ -38,6 +40,10 @@ class FakeStore:
 
 def _runtime(max_parallelism: int = 3):
     return SimpleNamespace(config={"configurable": {"max_concurrent_subagents": max_parallelism}}, context={})
+
+
+def _runtime_without_config(context: dict | None = None):
+    return SimpleNamespace(context=context or {})
 
 
 def test_select_active_batch_skips_conflicting_writers_and_blocked_dependencies():
@@ -468,3 +474,110 @@ def test_project_dispatch_middleware_wrap_tool_call_requires_work_order_id():
     assert isinstance(result, ToolMessage)
     assert result.status == "error"
     assert "work_order_id" in str(result.content)
+
+
+def test_project_dispatch_middleware_reads_parallelism_from_get_config_when_runtime_lacks_config():
+    fake_store = FakeStore()
+    middleware = ProjectDispatchMiddleware()
+    state = {
+        "team_name": "software-delivery-default",
+        "project_phase": "build",
+        "project_status": "active",
+        "control_flags": {"pause_requested": False, "abort_requested": False},
+        "work_orders": [
+            {
+                "id": "backend-api",
+                "owner_agent": "backend-agent",
+                "description": "Build API",
+                "prompt": "",
+                "goal": "Build API",
+                "write_scope": ["backend/api"],
+                "read_scope": [],
+                "dependencies": [],
+                "verification_steps": [],
+                "done_definition": [],
+                "status": "planned",
+                "phase": "build",
+                "result": "",
+                "updated_at": "2026-03-26T00:00:00Z",
+            },
+            {
+                "id": "frontend-ui",
+                "owner_agent": "frontend-agent",
+                "description": "Build UI",
+                "prompt": "",
+                "goal": "Build UI",
+                "write_scope": ["frontend/src/app"],
+                "read_scope": [],
+                "dependencies": [],
+                "verification_steps": [],
+                "done_definition": [],
+                "status": "planned",
+                "phase": "build",
+                "result": "",
+                "updated_at": "2026-03-26T00:00:00Z",
+            },
+        ],
+        "agent_reports": [],
+        "artifacts": [],
+        "messages": [],
+    }
+
+    with (
+        patch("deerflow.agents.middlewares.project_dispatch_middleware.get_store", return_value=fake_store),
+        patch(
+            "deerflow.agents.middlewares.project_dispatch_middleware.get_config",
+            return_value={"configurable": {"max_concurrent_subagents": 1}},
+        ),
+    ):
+        update = middleware.before_model(state, _runtime_without_config())
+
+    assert update is not None
+    assert update["active_batch"]["work_order_ids"] == ["backend-api"]
+
+
+def test_project_lifecycle_middleware_reads_project_and_thread_from_get_config_when_runtime_lacks_config():
+    fake_store = FakeStore()
+    middleware = ProjectLifecycleMiddleware()
+    state = {
+        "project_title": "Project From Config",
+        "project_brief": {"objective": "Use config fallback"},
+        "work_orders": [],
+        "agent_reports": [],
+        "artifacts": [],
+    }
+
+    with (
+        patch("deerflow.agents.middlewares.project_lifecycle_middleware.get_store", return_value=fake_store),
+        patch(
+            "deerflow.agents.middlewares.project_lifecycle_middleware.get_config",
+            return_value={
+                "configurable": {
+                    "project_id": "project-from-config",
+                    "thread_id": "thread-from-config",
+                    "max_concurrent_subagents": 2,
+                }
+            },
+        ),
+    ):
+        before = middleware.before_agent(state, _runtime_without_config())
+        after = middleware.after_agent(
+            {
+                **state,
+                **(before or {}),
+                "control_flags": {"pause_requested": False, "abort_requested": False},
+                "project_phase": "intake",
+                "project_status": "draft",
+            },
+            _runtime_without_config(),
+        )
+
+    assert before is not None
+    assert before["project_id"] == "project-from-config"
+    assert before["project_phase"] == "intake"
+    assert after is not None
+    assert after["project_phase"] == "intake"
+    repo = ProjectStoreRepository(fake_store)
+    index = repo.get_project_index("project-from-config")
+    assert index is not None
+    assert index["thread_id"] == "thread-from-config"

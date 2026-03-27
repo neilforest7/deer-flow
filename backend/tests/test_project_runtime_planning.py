@@ -11,6 +11,7 @@ from deerflow.project_runtime import (
     synthesize_work_orders,
     validate_planning_output,
 )
+from deerflow.project_runtime.types import WorkOrderStatus
 
 
 def test_discovery_synthesizes_canonical_project_brief():
@@ -160,6 +161,95 @@ def test_validate_planning_output_rejects_empty_acceptance_checks():
         assert "acceptance_checks" in str(exc)
     else:
         raise AssertionError("Expected validate_planning_output() to reject empty acceptance checks")
+
+
+def test_validate_planning_output_rejects_non_build_owner_agents():
+    payload = {
+        "project_brief": {
+            "objective": "Implement backend runtime approval flow",
+            "scope": ["backend runtime"],
+            "constraints": ["keep lead_agent unchanged"],
+            "deliverables": ["validated work orders"],
+            "success_criteria": ["tests pass"],
+        },
+        "work_orders": [
+            {
+                "id": "wo-1",
+                "owner_agent": "planner-agent",
+                "title": "Invalid owner",
+                "goal": "Implement backend runtime approval flow",
+                "read_scope": [],
+                "write_scope": [],
+                "dependencies": [],
+                "acceptance_checks": ["pytest"],
+            }
+        ],
+    }
+
+    try:
+        validate_planning_output(payload)
+    except ValueError as exc:
+        assert "invalid owner_agent" in str(exc)
+        assert "planner-agent" in str(exc)
+    else:
+        raise AssertionError("Expected validate_planning_output() to reject non-build owner agents")
+
+
+def test_build_planning_result_replans_failed_qa_work_orders_and_clears_stale_state():
+    result = build_planning_result(
+        {
+            "project_brief": {
+                "objective": "Ship runtime",
+                "scope": ["backend runtime"],
+                "constraints": ["keep lead_agent unchanged"],
+                "deliverables": ["runtime"],
+                "success_criteria": ["tests pass"],
+            },
+            "work_orders": [
+                {
+                    "id": "wo-1",
+                    "owner_agent": "backend-agent",
+                    "title": "Backend work",
+                    "goal": "Ship runtime",
+                    "read_scope": ["backend"],
+                    "write_scope": ["backend"],
+                    "dependencies": [],
+                    "acceptance_checks": ["pytest"],
+                    "status": WorkOrderStatus.COMPLETED.value,
+                },
+                {
+                    "id": "wo-2",
+                    "owner_agent": "frontend-agent",
+                    "title": "Frontend work",
+                    "goal": "Ship runtime UI",
+                    "read_scope": ["frontend"],
+                    "write_scope": ["frontend"],
+                    "dependencies": ["wo-1"],
+                    "acceptance_checks": ["test"],
+                    "status": WorkOrderStatus.COMPLETED.value,
+                },
+            ],
+            "qa_gate": {
+                "result": "fail",
+                "findings": ["Acceptance check failed for wo-1"],
+                "required_rework": ["Rework wo-1 to satisfy acceptance check: pytest"],
+            },
+            "active_work_order_ids": ["wo-1"],
+            "build_error": "old build error",
+            "delivery_summary": {"summary": "stale"},
+        }
+    )
+
+    assert result["phase"] == "planning"
+    assert result["plan_status"] == "awaiting_approval"
+    assert result["active_work_order_ids"] == []
+    assert result["build_error"] is None
+    assert result["qa_gate"] is None
+    assert result["delivery_summary"] is None
+    assert result["work_orders"][0]["id"] == "wo-1"
+    assert result["work_orders"][0]["status"] == WorkOrderStatus.PENDING.value
+    assert "QA rework: Rework wo-1 to satisfy acceptance check: pytest" in result["work_orders"][0]["goal"]
+    assert result["work_orders"][1]["status"] == WorkOrderStatus.COMPLETED.value
 
 
 def test_graph_reaches_awaiting_approval_with_validated_plan():

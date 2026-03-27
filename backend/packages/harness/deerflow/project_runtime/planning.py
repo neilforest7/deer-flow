@@ -7,7 +7,8 @@ from typing import Any
 from langchain_core.messages import BaseMessage, HumanMessage
 
 from deerflow.project_runtime.prompts import build_discovery_prompt, build_planning_prompt
-from deerflow.project_runtime.types import PlanStatus, PlanningOutput, ProjectBrief, WorkOrder
+from deerflow.project_runtime.registry import get_default_phase_owners
+from deerflow.project_runtime.types import Phase, PlanStatus, PlanningOutput, ProjectBrief, WorkOrder, WorkOrderStatus
 
 _DEFAULT_CONSTRAINTS = [
     "Keep lead_agent behavior unchanged",
@@ -62,6 +63,11 @@ _ACCEPTANCE_CHECK_BY_AGENT = {
     "data-agent": "Validate schema and data compatibility for the changed path",
     "backend-agent": "PYTHONPATH=. uv run pytest tests/test_project_runtime_graph.py -q",
 }
+_QA_REWORK_PREFIX = "QA rework:"
+
+
+def _allowed_build_owner_agents() -> tuple[str, ...]:
+    return get_default_phase_owners(Phase.BUILD)
 
 
 def _extract_text(content: Any) -> str:
@@ -116,11 +122,18 @@ def validate_planning_output(payload: PlanningOutput | Mapping[str, Any]) -> Pla
     output = PlanningOutput.model_validate(payload)
     seen_ids: set[str] = set()
     work_order_ids = {work_order.id for work_order in output.work_orders}
+    allowed_owners = set(_allowed_build_owner_agents())
 
     for work_order in output.work_orders:
         if work_order.id in seen_ids:
             raise ValueError(f"Duplicate work order id: {work_order.id}")
         seen_ids.add(work_order.id)
+        if work_order.owner_agent not in allowed_owners:
+            allowed_list = ", ".join(sorted(allowed_owners))
+            raise ValueError(
+                f"Work order {work_order.id} has invalid owner_agent {work_order.owner_agent!r}; "
+                f"allowed owners: {allowed_list}"
+            )
         if work_order.id in work_order.dependencies:
             raise ValueError(f"Work order {work_order.id} cannot depend on itself")
         missing_dependencies = [dependency for dependency in work_order.dependencies if dependency not in work_order_ids]
@@ -187,9 +200,11 @@ def synthesize_work_orders(
 ) -> list[WorkOrder]:
     validated_brief = validate_project_brief(project_brief or synthesize_project_brief(state))
     latest_request = get_latest_user_message_text(state)
+    allowed_owner_agents = _allowed_build_owner_agents()
     prompt = build_planning_prompt(
         project_brief=validated_brief.model_dump(mode="json"),
         latest_user_request=latest_request,
+        allowed_owner_agents=allowed_owner_agents,
     )
     owner_agents = _infer_owner_agents(latest_request)
     work_orders: list[WorkOrder] = []
@@ -214,6 +229,120 @@ def synthesize_work_orders(
     return work_orders
 
 
+def _normalize_work_order(value: WorkOrder | Mapping[str, Any]) -> WorkOrder:
+    return WorkOrder.model_validate(value)
+
+
+def _extract_rework_targets(
+    required_rework: list[str],
+    work_orders: list[WorkOrder],
+) -> tuple[dict[str, list[str]], list[str]]:
+    matched: dict[str, list[str]] = {}
+    unmatched: list[str] = []
+
+    for reason in required_rework:
+        matched_ids = [work_order.id for work_order in work_orders if work_order.id in reason]
+        if not matched_ids:
+            unmatched.append(reason)
+            continue
+        for work_order_id in matched_ids:
+            matched.setdefault(work_order_id, []).append(reason)
+
+    return matched, unmatched
+
+
+def _append_qa_rework_note(goal: str, reasons: list[str]) -> str:
+    base_lines = [
+        line
+        for line in goal.splitlines()
+        if not line.strip().startswith(_QA_REWORK_PREFIX)
+    ]
+    notes = [f"{_QA_REWORK_PREFIX} {reason}" for reason in reasons]
+    return "\n".join([*base_lines, *notes])
+
+
+def _next_fallback_work_order_id(existing_work_orders: list[WorkOrder]) -> str:
+    existing_ids = {work_order.id for work_order in existing_work_orders}
+    index = 1
+    while True:
+        candidate = f"wo-rework-{index}"
+        if candidate not in existing_ids:
+            return candidate
+        index += 1
+
+
+def _fallback_rework_work_order(
+    reason: str,
+    *,
+    project_brief: ProjectBrief,
+    existing_work_orders: list[WorkOrder],
+) -> WorkOrder:
+    owner_agents = _infer_owner_agents(reason)
+    owner_agent = owner_agents[0] if owner_agents else "backend-agent"
+    return WorkOrder(
+        id=_next_fallback_work_order_id(existing_work_orders),
+        owner_agent=owner_agent,
+        title=f"{owner_agent} QA rework",
+        goal=_append_qa_rework_note(project_brief.objective, [reason]),
+        read_scope=list(_READ_SCOPE_BY_AGENT.get(owner_agent, [])),
+        write_scope=list(_WRITE_SCOPE_BY_AGENT.get(owner_agent, [])),
+        dependencies=[],
+        acceptance_checks=[
+            _ACCEPTANCE_CHECK_BY_AGENT.get(owner_agent, "Run the targeted checks relevant to this work order"),
+        ],
+        status=WorkOrderStatus.PENDING,
+    )
+
+
+def _replan_from_qa_failure(
+    state: Mapping[str, Any],
+    *,
+    project_brief: ProjectBrief,
+) -> list[WorkOrder] | None:
+    qa_gate = state.get("qa_gate")
+    if not isinstance(qa_gate, Mapping):
+        return None
+    if qa_gate.get("result") != "fail":
+        return None
+
+    required_rework = qa_gate.get("required_rework")
+    if not isinstance(required_rework, list) or not required_rework:
+        return None
+
+    existing_work_orders = [_normalize_work_order(item) for item in state.get("work_orders") or []]
+    if not existing_work_orders:
+        return None
+
+    matched_reasons, unmatched_reasons = _extract_rework_targets(required_rework, existing_work_orders)
+    if not matched_reasons and not unmatched_reasons:
+        return None
+
+    replanned: list[WorkOrder] = []
+    for work_order in existing_work_orders:
+        reasons = matched_reasons.get(work_order.id)
+        if not reasons:
+            replanned.append(work_order)
+            continue
+        replanned.append(
+            work_order.model_copy(
+                update={
+                    "goal": _append_qa_rework_note(work_order.goal, reasons),
+                    "status": WorkOrderStatus.PENDING,
+                }
+            )
+        )
+
+    for reason in unmatched_reasons:
+        fallback = _fallback_rework_work_order(
+            reason,
+            project_brief=project_brief,
+            existing_work_orders=replanned,
+        )
+        replanned.append(fallback)
+
+    return replanned
+
+
 def build_discovery_result(state: Mapping[str, Any]) -> dict[str, Any]:
     project_brief = synthesize_project_brief(state)
     return {
@@ -224,10 +353,14 @@ def build_discovery_result(state: Mapping[str, Any]) -> dict[str, Any]:
 
 def build_planning_result(state: Mapping[str, Any]) -> dict[str, Any]:
     project_brief = validate_project_brief(state.get("project_brief") or synthesize_project_brief(state))
+    replanned_work_orders = _replan_from_qa_failure(state, project_brief=project_brief)
     planning_output = validate_planning_output(
         {
             "project_brief": project_brief.model_dump(mode="json"),
-            "work_orders": [work_order.model_dump(mode="json") for work_order in synthesize_work_orders(state, project_brief=project_brief)],
+            "work_orders": [
+                work_order.model_dump(mode="json")
+                for work_order in (replanned_work_orders or synthesize_work_orders(state, project_brief=project_brief))
+            ],
         }
     )
     return {
@@ -235,6 +368,10 @@ def build_planning_result(state: Mapping[str, Any]) -> dict[str, Any]:
         "project_brief": planning_output.project_brief.model_dump(mode="json"),
         "work_orders": [work_order.model_dump(mode="json") for work_order in planning_output.work_orders],
         "plan_status": PlanStatus.AWAITING_APPROVAL.value,
+        "active_work_order_ids": [],
+        "build_error": None,
+        "qa_gate": None,
+        "delivery_summary": None,
     }
 
 

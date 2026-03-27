@@ -201,6 +201,58 @@ def test_dispatch_build_step_marks_failed_and_clears_active_id_on_execution_erro
     assert outcome.update["active_work_order_ids"] == ["wo-4"]
 
 
+def test_dispatch_build_step_keeps_thread_id_and_thread_data_isolated_across_threads():
+    captures: list[dict[str, object]] = []
+
+    class CapturingExecutor:
+        def __init__(self, config, tools, parent_model=None, sandbox_state=None, thread_data=None, thread_id=None):
+            captures.append(
+                {
+                    "config_name": config.name,
+                    "thread_id": thread_id,
+                    "thread_data": thread_data,
+                }
+            )
+
+        def execute(self, task):
+            captures[-1]["task"] = task
+            return SimpleNamespace(
+                task_id="task-1",
+                trace_id="trace-1",
+                status="completed",
+                result="done",
+            )
+
+    first_state = _state_with_work_orders()
+    first_state["thread_data"] = {"workspace_path": "/tmp/thread-a/workspace"}
+    second_state = _state_with_work_orders()
+    second_state["thread_data"] = {"workspace_path": "/tmp/thread-b/workspace"}
+
+    first_outcome = dispatch_build_step(
+        first_state,
+        thread_id="thread-a",
+        available_tools=[SimpleNamespace(name="read_file"), SimpleNamespace(name="write_file")],
+        executor_cls=CapturingExecutor,
+    )
+    second_outcome = dispatch_build_step(
+        second_state,
+        thread_id="thread-b",
+        available_tools=[SimpleNamespace(name="read_file"), SimpleNamespace(name="write_file")],
+        executor_cls=CapturingExecutor,
+    )
+
+    assert first_outcome.kind == "completed"
+    assert second_outcome.kind == "completed"
+    assert captures[0]["thread_id"] == "thread-a"
+    assert captures[1]["thread_id"] == "thread-b"
+    assert captures[0]["thread_data"] == {"workspace_path": "/tmp/thread-a/workspace"}
+    assert captures[1]["thread_data"] == {"workspace_path": "/tmp/thread-b/workspace"}
+    assert "thread-a" in str(captures[0]["task"])
+    assert "thread-b" in str(captures[1]["task"])
+    assert "thread-b" not in str(captures[0]["task"])
+    assert "thread-a" not in str(captures[1]["task"])
+
+
 def test_apply_dispatch_update_combines_new_report_and_work_order_status():
     outcome = {
         "work_orders": [

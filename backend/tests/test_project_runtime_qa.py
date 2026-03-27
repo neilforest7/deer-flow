@@ -164,3 +164,47 @@ def test_run_qa_gate_fails_when_completed_work_order_has_no_report():
 
     assert result["result"] == "fail"
     assert any("no agent report" in item for item in result["findings"])
+
+
+def test_run_acceptance_check_uses_latest_report_for_reworked_work_order():
+    state = _state()
+    state["agent_reports"] = [
+        {
+            "work_order_id": "wo-1",
+            "agent_name": "backend-agent",
+            "summary": "older report",
+            "changes": [],
+            "risks": [],
+            "verification": [],
+        },
+        {
+            "work_order_id": "wo-1",
+            "agent_name": "backend-agent",
+            "summary": "latest rerun report",
+            "changes": [],
+            "risks": [],
+            "verification": [],
+        },
+    ]
+    captured = {}
+
+    class CapturingExecutor:
+        def __init__(self, config, tools, parent_model=None, sandbox_state=None, thread_data=None, thread_id=None):
+            pass
+
+        def execute(self, task):
+            captured["task"] = task
+            return SimpleNamespace(status="completed", result="VERDICT: PASS\nEVIDENCE: pytest passed")
+
+    result = run_acceptance_check(
+        state,
+        state["work_orders"][0],
+        "uv run pytest tests/test_project_runtime_graph.py -q",
+        thread_id="thread-1",
+        available_tools=[SimpleNamespace(name="bash"), SimpleNamespace(name="read_file")],
+        executor_cls=CapturingExecutor,
+    )
+
+    assert result.passed is True
+    assert "latest rerun report" in captured["task"]
+    assert "older report" not in captured["task"]

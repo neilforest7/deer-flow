@@ -25,16 +25,22 @@ def build_discovery_prompt(*, latest_user_request: str, existing_brief: dict[str
     )
 
 
-def build_planning_prompt(*, project_brief: dict[str, Any], latest_user_request: str) -> str:
+def build_planning_prompt(
+    *,
+    project_brief: dict[str, Any],
+    latest_user_request: str,
+    allowed_owner_agents: list[str] | tuple[str, ...],
+) -> str:
     payload = {
         "project_brief": project_brief,
         "latest_user_request": latest_user_request,
+        "allowed_owner_agents": list(allowed_owner_agents),
         "required_schema": {
             "project_brief": "ProjectBrief",
             "work_orders": [
                 {
                     "id": "string",
-                    "owner_agent": "string",
+                    "owner_agent": "one of allowed_owner_agents",
                     "title": "string",
                     "goal": "string",
                     "read_scope": ["string"],

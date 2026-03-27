@@ -12,7 +12,7 @@ from deerflow.project_runtime.graph import (
     resolve_qa_transition,
     route_from_phase,
 )
-from deerflow.project_runtime.types import WorkOrderStatus
+from deerflow.project_runtime.types import WorkOrder, WorkOrderStatus
 
 
 def test_project_team_agent_compiles_with_project_thread_state():
@@ -225,6 +225,91 @@ def test_build_failure_is_checkpointed_without_reusing_default_thread():
     assert result["phase"] == Phase.BUILD.value
     assert result["build_error"] == "tool failure"
     assert graph.get_state(config).values["work_orders"][0]["status"] == WorkOrderStatus.FAILED.value
+
+
+def test_qa_fail_replans_targeted_work_order_before_returning_to_awaiting_approval():
+    graph = make_project_team_agent(checkpointer=InMemorySaver())
+    config = {"configurable": {"thread_id": "replan-thread"}, "recursion_limit": 20}
+
+    result = graph.invoke(
+        {
+            "phase": Phase.PLANNING.value,
+            "project_brief": {
+                "objective": "Ship runtime",
+                "scope": ["backend runtime"],
+                "constraints": ["keep lead_agent unchanged"],
+                "deliverables": ["runtime"],
+                "success_criteria": ["tests pass"],
+            },
+            "work_orders": [
+                {
+                    "id": "wo-1",
+                    "owner_agent": "backend-agent",
+                    "title": "Backend work",
+                    "goal": "Ship runtime",
+                    "acceptance_checks": ["pytest"],
+                    "status": WorkOrderStatus.COMPLETED.value,
+                }
+            ],
+            "qa_gate": {
+                "result": "fail",
+                "findings": ["Acceptance check failed for wo-1"],
+                "required_rework": ["Rework wo-1 to satisfy acceptance check: pytest"],
+            },
+            "active_work_order_ids": ["wo-1"],
+            "build_error": "stale build error",
+            "delivery_summary": {"summary": "stale"},
+        },
+        config=config,
+    )
+
+    assert result["phase"] == Phase.AWAITING_APPROVAL.value
+    assert result["plan_status"] == PlanStatus.AWAITING_APPROVAL.value
+    assert result["work_orders"][0]["status"] == WorkOrderStatus.PENDING.value
+    assert "QA rework: Rework wo-1 to satisfy acceptance check: pytest" in result["work_orders"][0]["goal"]
+    assert result["active_work_order_ids"] == []
+    assert result["build_error"] is None
+    assert result["qa_gate"] is None
+    assert graph.get_state(config).values["phase"] == Phase.AWAITING_APPROVAL.value
+
+
+def test_graph_rejects_invalid_planning_owner_before_awaiting_approval():
+    graph = make_project_team_agent(checkpointer=InMemorySaver())
+    config = {"configurable": {"thread_id": "invalid-owner-thread"}, "recursion_limit": 20}
+    monkeypatch = pytest.MonkeyPatch()
+
+    def bad_work_orders(_state, *, project_brief=None):
+        return [
+            WorkOrder(
+                id="wo-1",
+                owner_agent="planner-agent",
+                title="Invalid owner",
+                goal="Ship runtime",
+                read_scope=[],
+                write_scope=[],
+                dependencies=[],
+                acceptance_checks=["pytest"],
+            )
+        ]
+
+    monkeypatch.setattr("deerflow.project_runtime.planning.synthesize_work_orders", bad_work_orders)
+    try:
+        with pytest.raises(ValueError, match="invalid owner_agent"):
+            graph.invoke(
+                {
+                    "phase": Phase.PLANNING.value,
+                    "project_brief": {
+                        "objective": "Ship runtime",
+                        "scope": ["backend runtime"],
+                        "constraints": ["keep lead_agent unchanged"],
+                        "deliverables": ["runtime"],
+                        "success_criteria": ["tests pass"],
+                    },
+                },
+                config=config,
+            )
+    finally:
+        monkeypatch.undo()
 
 
 def test_langgraph_registers_project_team_agent_without_removing_lead_agent():

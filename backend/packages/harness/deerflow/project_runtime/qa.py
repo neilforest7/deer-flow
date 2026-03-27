@@ -36,6 +36,15 @@ def _normalize_brief(value: ProjectBrief | Mapping[str, Any] | None) -> ProjectB
     return ProjectBrief.model_validate(value)
 
 
+def _latest_report_payload(state: Mapping[str, Any], work_order_id: str) -> dict[str, Any]:
+    reports = state.get("agent_reports") or []
+    for item in reversed(reports):
+        report = _normalize_report(item)
+        if report.work_order_id == work_order_id:
+            return report.model_dump(mode="json")
+    return {}
+
+
 def _default_executor_cls():
     from deerflow.subagents.executor import SubagentExecutor
 
@@ -80,14 +89,7 @@ def _build_acceptance_check_task(
     thread_id: str | None,
 ) -> str:
     project_brief = _normalize_brief(state.get("project_brief"))
-    report = next(
-        (
-            _normalize_report(item).model_dump(mode="json")
-            for item in state.get("agent_reports") or []
-            if _normalize_report(item).work_order_id == work_order.id
-        ),
-        {},
-    )
+    report = _latest_report_payload(state, work_order.id)
     lines = [
         "You are executing a deterministic QA acceptance check for the project runtime.",
         f"Thread ID: {thread_id or 'unknown'}",

@@ -22,6 +22,28 @@ The M1 deliverable is a backend runtime that satisfies these requirements:
 - Require in-conversation user approval before `build`
 - Treat ACP as an optional extension point rather than an M1 dependency
 
+## Current Implementation Status
+
+This document now targets an incremental baseline instead of a clean-room implementation.
+
+Already landed in code:
+
+- `project_team_agent` exists as a separate runtime
+- `ProjectThreadState`, canonical runtime types, approval routing, build dispatch, QA gate, and project client wrappers already exist
+- build-phase owner agents execute through `SubagentExecutor`
+- executable QA checks already run through `qa-agent`
+
+Previously missing before this revision:
+
+- `discovery`, `planning`, and `delivery` were deterministic helpers rather than real phase-specialist executions
+- `discovery-agent`, `architect-agent`, `planner-agent`, and `delivery-agent` were registered but not wired into runtime phase execution
+- the PRD did not distinguish “specialist exists in registry” from “specialist is already part of the active execution path”
+
+The revised implementation supports two compatible modes:
+
+- default compatibility mode keeps deterministic non-build phases available
+- phase-specialist mode executes `discovery`, `planning`, and `delivery` through DeerFlow subagent substrate
+
 ## Architecture And Boundaries
 
 ### 1. Module Boundary
@@ -109,6 +131,13 @@ Required flow:
 
 The graph must support multi-turn execution through the existing thread/checkpointer model. Each new user turn re-enters the graph with persisted state, and routing is determined by persisted `phase` and `plan_status`.
 
+Phase execution rules:
+
+- `build` and executable `qa_gate` checks always use real subagent execution
+- `discovery`, `planning`, and `delivery` may execute in deterministic mode or phase-specialist mode
+- phase-specialist mode is controlled by project runtime configuration only
+- deterministic fallback may remain enabled for compatibility
+
 ### 4. Control Plane vs Execution Plane
 
 M1 uses:
@@ -185,6 +214,8 @@ M1 must not introduce:
 - `agent_reports`
 - `qa_gate`
 - `delivery_summary`
+- `phase_artifacts`
+- `phase_attempts`
 
 It also inherits existing thread-level state such as:
 
@@ -242,6 +273,13 @@ It also inherits existing thread-level state such as:
 - `findings`
 - `required_rework`
 
+`DeliverySummary`
+
+- `completed_work`
+- `artifacts`
+- `verification`
+- `follow_ups`
+
 ### 4. Memory Isolation
 
 Global long-term memory and team runtime must remain isolated.
@@ -280,8 +318,11 @@ Each specialist and QA execution must attach metadata that allows execution-leve
 
 `execution_kind` must distinguish at least:
 
+- `discovery_specialist`
+- `planning_specialist`
 - `build_specialist`
 - `qa_check`
+- `delivery_specialist`
 
 ### 3. Trace Context Propagation
 
@@ -373,6 +414,12 @@ Phase mapping:
 
 `general-purpose` and `bash` are fallback specialists only. They are not default phase owners.
 
+Execution status by specialist group:
+
+- `frontend-agent`, `backend-agent`, `integration-agent`, `devops-agent`, `data-agent`, and `design-agent` are live build executors
+- `qa-agent` is a live QA executor
+- `discovery-agent`, `architect-agent`, `planner-agent`, and `delivery-agent` execute only when phase-specialist mode is enabled
+
 The project runtime owns a local specialist registry. It must not modify the core built-in subagent registry.
 
 ### 4. Approval UX
@@ -406,6 +453,20 @@ M1 policy:
 - ACP exposure is controlled by specialist tool allowlists
 - `planner-agent` and `qa-agent` do not depend on ACP by default
 - ACP may be allowed for `frontend-agent`, `backend-agent`, or `integration-agent` if explicitly configured
+
+### 6. Phase Specialist Configuration
+
+Minimal project runtime configuration surface:
+
+- `default_model_name`
+- `acp_allowed_specialists`
+- `enable_phase_specialists`
+- `allow_deterministic_phase_fallback`
+
+Default policy remains conservative:
+
+- phase specialists are disabled unless explicitly enabled
+- deterministic fallback remains enabled unless explicitly disabled
 
 ## Implementation Requirements
 

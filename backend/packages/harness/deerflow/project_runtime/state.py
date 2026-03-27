@@ -68,6 +68,8 @@ class ProjectThreadState(ThreadState):
     delivery_summary: NotRequired[dict | None]
     project_runtime_version: NotRequired[str]
     trace_id: NotRequired[str | None]
+    phase_artifacts: NotRequired[dict[str, Any]]
+    phase_attempts: NotRequired[dict[str, int]]
 
 
 def make_project_thread_state_defaults() -> dict:
@@ -83,4 +85,6 @@ def make_project_thread_state_defaults() -> dict:
         "delivery_summary": None,
         "project_runtime_version": "m1",
         "trace_id": None,
+        "phase_artifacts": {},
+        "phase_attempts": {},
     }

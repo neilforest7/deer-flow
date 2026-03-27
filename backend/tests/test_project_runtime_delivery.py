@@ -1,5 +1,7 @@
 from types import SimpleNamespace
 
+import pytest
+
 from deerflow.project_runtime.delivery import build_delivery_summary, execute_delivery_phase, run_delivery
 
 
@@ -95,7 +97,6 @@ def test_run_delivery_falls_back_to_deterministic_summary(monkeypatch):
         def execute(self, task):
             return SimpleNamespace(status="failed", error="boom")
 
-    monkeypatch.setattr("deerflow.project_runtime.delivery._phase_specialists_enabled", lambda: True)
     monkeypatch.setattr("deerflow.project_runtime.delivery._deterministic_phase_fallback_allowed", lambda: True)
 
     result = run_delivery(
@@ -124,3 +125,39 @@ def test_run_delivery_falls_back_to_deterministic_summary(monkeypatch):
 
     assert result["phase_artifacts"]["delivery"]["mode"] == "deterministic"
     assert result["delivery_summary"]["completed_work"][0]["work_order_id"] == "wo-1"
+
+
+def test_run_delivery_raises_when_specialist_fails_and_fallback_is_disabled(monkeypatch):
+    class FailingExecutor:
+        def __init__(self, config, tools, parent_model=None, sandbox_state=None, thread_data=None, thread_id=None):
+            pass
+
+        def execute(self, task):
+            return SimpleNamespace(status="failed", error="boom")
+
+    monkeypatch.setattr("deerflow.project_runtime.delivery._deterministic_phase_fallback_allowed", lambda: False)
+
+    with pytest.raises(RuntimeError, match="boom"):
+        run_delivery(
+            {
+                "work_orders": [
+                    {
+                        "id": "wo-1",
+                        "owner_agent": "backend-agent",
+                        "title": "Implement runtime",
+                        "goal": "Ship runtime",
+                        "read_scope": [],
+                        "write_scope": [],
+                        "dependencies": [],
+                        "acceptance_checks": ["pytest"],
+                        "status": "completed",
+                    }
+                ],
+                "agent_reports": [{"work_order_id": "wo-1", "agent_name": "backend-agent", "summary": "done"}],
+                "qa_gate": {"result": "pass", "findings": [], "required_rework": []},
+                "artifacts": [],
+            },
+            thread_id="thread-1",
+            available_tools=[SimpleNamespace(name="read_file"), SimpleNamespace(name="present_files")],
+            executor_cls=FailingExecutor,
+        )

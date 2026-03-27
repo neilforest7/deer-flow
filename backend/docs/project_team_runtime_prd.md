@@ -460,12 +460,11 @@ Minimal project runtime configuration surface:
 
 - `default_model_name`
 - `acp_allowed_specialists`
-- `enable_phase_specialists`
 - `allow_deterministic_phase_fallback`
 
-Default policy remains conservative:
+Default policy:
 
-- phase specialists are disabled unless explicitly enabled
+- phase specialists always run for discovery, planning, and delivery
 - deterministic fallback remains enabled unless explicitly disabled
 
 ## Implementation Requirements

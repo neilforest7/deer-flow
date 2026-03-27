@@ -7,7 +7,7 @@ from typing import Any, Literal
 from deerflow.project_runtime.observability import build_specialist_metadata, resolve_trace_id
 from deerflow.project_runtime.registry import get_specialist_config, specialist_uses_acp_by_default, tool_names_for_specialist
 from deerflow.project_runtime.state import merge_active_work_order_ids, merge_work_orders
-from deerflow.project_runtime.types import AgentReport, ProjectBrief, WorkOrder, WorkOrderStatus
+from deerflow.project_runtime.types import AgentReport, Phase, ProjectBrief, WorkOrder, WorkOrderStatus
 from deerflow.tools import get_available_tools
 
 
@@ -151,6 +151,7 @@ def dispatch_work_order(
     filtered_tool_names = tool_names_for_specialist(
         normalized_work_order.owner_agent,
         available_tools,
+        phase=Phase.BUILD,
         acp_enabled=acp_enabled and specialist_uses_acp_by_default(normalized_work_order.owner_agent),
     )
     scoped_config = replace(specialist_config, tools=list(filtered_tool_names))

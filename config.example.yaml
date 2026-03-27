@@ -403,8 +403,6 @@ project_runtime:
   acp_allowed_specialists: []
   # Optional default model override for project runtime calls.
   default_model_name: null
-  # Enable discovery/planning/delivery specialist execution instead of deterministic synthesis.
-  enable_phase_specialists: false
   # Allow deterministic fallback when a phase specialist fails or returns invalid JSON.
   allow_deterministic_phase_fallback: true
 

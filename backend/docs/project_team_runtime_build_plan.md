@@ -436,8 +436,7 @@ This should be a wrapper over existing tool assembly, not a fork of the core too
 
 Compatibility rule:
 
-- if `enable_phase_specialists=false`, `discovery`, `planning`, and `delivery` use deterministic synthesis
-- if `enable_phase_specialists=true`, those phases execute specialists first
+- `discovery`, `planning`, and `delivery` execute specialists first
 - if specialist execution fails and `allow_deterministic_phase_fallback=true`, runtime falls back to deterministic synthesis
 - if specialist execution fails and fallback is disabled, the phase fails fast
 

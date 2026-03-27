@@ -6,7 +6,7 @@ from typing import Any
 
 from deerflow.project_runtime.prompts import build_delivery_prompt
 from deerflow.project_runtime.registry import get_specialist_config, specialist_uses_acp_by_default, tool_names_for_specialist
-from deerflow.project_runtime.types import AgentReport, DeliverySummary, WorkOrder, WorkOrderStatus
+from deerflow.project_runtime.types import AgentReport, DeliverySummary, Phase, WorkOrder, WorkOrderStatus
 from deerflow.tools import get_available_tools
 
 
@@ -16,15 +16,6 @@ def _normalize_work_order(value: WorkOrder | Mapping[str, Any]) -> WorkOrder:
 
 def _normalize_report(value: AgentReport | Mapping[str, Any]) -> AgentReport:
     return AgentReport.model_validate(value)
-
-
-def _phase_specialists_enabled() -> bool:
-    try:
-        from deerflow.config import get_app_config
-
-        return bool(getattr(get_app_config().project_runtime, "enable_phase_specialists", False))
-    except FileNotFoundError:
-        return False
 
 
 def _deterministic_phase_fallback_allowed() -> bool:
@@ -106,6 +97,7 @@ def execute_delivery_phase(
     filtered_tool_names = tool_names_for_specialist(
         "delivery-agent",
         available_tools,
+        phase=Phase.DELIVERY,
         acp_enabled=acp_enabled and specialist_uses_acp_by_default("delivery-agent"),
     )
     scoped_config = replace(specialist_config, tools=list(filtered_tool_names))
@@ -150,8 +142,6 @@ def run_delivery(
     phase_artifacts = dict(state.get("phase_artifacts") or {})
     phase_attempts = dict(state.get("phase_attempts") or {})
     try:
-        if not _phase_specialists_enabled():
-            raise RuntimeError("phase specialists disabled")
         summary = execute_delivery_phase(
             state,
             thread_id=thread_id,

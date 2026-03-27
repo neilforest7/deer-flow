@@ -125,16 +125,43 @@ require_cmd() {
     fi
 }
 
+prepare_compose_env() {
+    export DEER_FLOW_HOME="${DEER_FLOW_HOME:-$REPO_DIR/backend/.deer-flow}"
+    export DEER_FLOW_CONFIG_PATH="${DEER_FLOW_CONFIG_PATH:-$REPO_DIR/config.yaml}"
+    export DEER_FLOW_EXTENSIONS_CONFIG_PATH="${DEER_FLOW_EXTENSIONS_CONFIG_PATH:-$REPO_DIR/extensions_config.json}"
+    export DEER_FLOW_DOCKER_SOCKET="${DEER_FLOW_DOCKER_SOCKET:-/var/run/docker.sock}"
+    export DEER_FLOW_REPO_ROOT="${DEER_FLOW_REPO_ROOT:-$REPO_DIR}"
+
+    if [ -z "${BETTER_AUTH_SECRET:-}" ]; then
+        local secret_file="$DEER_FLOW_HOME/.better-auth-secret"
+        if [ -f "$secret_file" ]; then
+            BETTER_AUTH_SECRET="$(cat "$secret_file")"
+        else
+            BETTER_AUTH_SECRET="placeholder"
+        fi
+        export BETTER_AUTH_SECRET
+    fi
+}
+
+compose_cmd() {
+    prepare_compose_env
+    docker compose -p deer-flow -f "$REPO_DIR/docker/docker-compose.yaml" "$@"
+}
+
+http_local() {
+    curl --noproxy '127.0.0.1,localhost,::1' -fsS "$@"
+}
+
 show_failure_diagnostics() {
     local compose_file="$REPO_DIR/docker/docker-compose.yaml"
     if [ -f "$compose_file" ] && command -v docker >/dev/null 2>&1; then
         echo ""
         echo "----- docker compose ps -----"
-        docker compose -p deer-flow -f "$compose_file" ps || true
+        compose_cmd ps || true
         for service in nginx gateway langgraph frontend; do
             echo ""
             echo "----- logs: $service -----"
-            docker compose -p deer-flow -f "$compose_file" logs --tail 80 "$service" || true
+            compose_cmd logs --tail 80 "$service" || true
         done
     fi
 }
@@ -242,10 +269,10 @@ print_step "Deploy"
 ./scripts/deploy.sh up
 
 print_step "Container status"
-docker compose -p deer-flow -f "$REPO_DIR/docker/docker-compose.yaml" ps
+compose_cmd ps
 
 print_step "HTTP smoke tests"
-HEALTH_JSON="$(curl -fsS "http://127.0.0.1:$PORT/health")"
+HEALTH_JSON="$(http_local "http://127.0.0.1:$PORT/health")"
 python3 - "$HEALTH_JSON" <<'PY'
 import json, sys
 data = json.loads(sys.argv[1])
@@ -254,16 +281,20 @@ if data.get("status") != "healthy":
 print(f"✓ /health -> {data}")
 PY
 
-MODELS_JSON="$(curl -fsS "http://127.0.0.1:$PORT/api/models")"
+MODELS_JSON="$(http_local "http://127.0.0.1:$PORT/api/models")"
 python3 - "$MODELS_JSON" <<'PY'
 import json, sys
 data = json.loads(sys.argv[1])
-if not isinstance(data, list):
-    raise SystemExit(f"Unexpected /api/models payload type: {type(data).__name__}")
-print(f"✓ /api/models -> {len(data)} model entries")
+if isinstance(data, list):
+    models = data
+elif isinstance(data, dict) and isinstance(data.get("models"), list):
+    models = data["models"]
+else:
+    raise SystemExit(f"Unexpected /api/models payload: {data}")
+print(f"✓ /api/models -> {len(models)} model entries")
 PY
 
-THREAD_JSON="$(curl -fsS -X POST "http://127.0.0.1:$PORT/api/langgraph/threads" \
+THREAD_JSON="$(http_local -X POST "http://127.0.0.1:$PORT/api/langgraph/threads" \
     -H 'Content-Type: application/json' \
     -d '{}')"
 THREAD_ID="$(python3 - "$THREAD_JSON" <<'PY'
@@ -277,11 +308,11 @@ PY
 )"
 echo "✓ /api/langgraph/threads -> created thread $THREAD_ID"
 
-curl -fsS "http://127.0.0.1:$PORT/api/langgraph/threads/$THREAD_ID/state" >/dev/null
+http_local "http://127.0.0.1:$PORT/api/langgraph/threads/$THREAD_ID/state" >/dev/null
 echo "✓ /api/langgraph/threads/$THREAD_ID/state"
 
-curl -fsS -X DELETE "http://127.0.0.1:$PORT/api/langgraph/threads/$THREAD_ID" >/dev/null || true
-curl -fsS -X DELETE "http://127.0.0.1:$PORT/api/threads/$THREAD_ID" >/dev/null || true
+http_local -X DELETE "http://127.0.0.1:$PORT/api/langgraph/threads/$THREAD_ID" >/dev/null || true
+http_local -X DELETE "http://127.0.0.1:$PORT/api/threads/$THREAD_ID" >/dev/null || true
 echo "✓ Cleaned temporary thread $THREAD_ID"
 
 print_step "Deployment complete"

@@ -1,4 +1,27 @@
+from .approval import parse_approval_intent
+from .dispatcher import (
+    DispatchBuildOutcome,
+    apply_dispatch_update,
+    build_can_proceed_to_qa,
+    build_specialist_task_input,
+    dispatch_build_phase,
+    dispatch_build_step,
+    dispatch_work_order,
+    select_runnable_work_orders,
+)
 from .graph import make_project_team_agent
+from .planning import (
+    build_discovery_result,
+    build_planning_result,
+    get_latest_user_message_text,
+    run_discovery,
+    run_planning,
+    synthesize_planning_output,
+    synthesize_project_brief,
+    synthesize_work_orders,
+    validate_planning_output,
+    validate_project_brief,
+)
 from .registry import (
     get_default_phase_owners,
     get_specialist_config,
@@ -21,6 +44,7 @@ from .types import (
 
 __all__ = [
     "AgentReport",
+    "DispatchBuildOutcome",
     "Phase",
     "PlanningOutput",
     "PlanStatus",
@@ -30,11 +54,29 @@ __all__ = [
     "QAGateResult",
     "WorkOrder",
     "WorkOrderStatus",
+    "apply_dispatch_update",
+    "build_can_proceed_to_qa",
+    "build_discovery_result",
+    "build_planning_result",
+    "build_specialist_task_input",
+    "dispatch_build_phase",
+    "dispatch_build_step",
+    "dispatch_work_order",
     "get_default_phase_owners",
+    "get_latest_user_message_text",
     "get_specialist_config",
     "get_specialist_names",
     "make_project_team_agent",
     "make_project_thread_state_defaults",
+    "parse_approval_intent",
+    "run_discovery",
+    "run_planning",
+    "select_runnable_work_orders",
     "specialist_uses_acp_by_default",
+    "synthesize_planning_output",
+    "synthesize_project_brief",
+    "synthesize_work_orders",
     "tool_names_for_specialist",
+    "validate_planning_output",
+    "validate_project_brief",
 ]

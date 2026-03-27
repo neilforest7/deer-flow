@@ -1,8 +1,13 @@
 from typing import Literal
 
+from langgraph.config import get_config
 from langgraph.graph import END, START, StateGraph
+from langgraph.runtime import Runtime
 from langgraph.types import Command
 
+from deerflow.project_runtime.approval import resolve_approval_update
+from deerflow.project_runtime.dispatcher import dispatch_build_phase
+from deerflow.project_runtime.planning import run_discovery, run_planning
 from deerflow.project_runtime.state import ProjectThreadState, make_project_thread_state_defaults
 from deerflow.project_runtime.types import Phase, PlanStatus, QAGateResult
 
@@ -26,19 +31,16 @@ def intake_node(state: ProjectThreadState) -> dict:
 
 
 def discovery_node(state: ProjectThreadState) -> dict:
-    return {"phase": Phase.DISCOVERY.value}
+    return run_discovery(state)
 
 
 def planning_node(state: ProjectThreadState) -> dict:
-    return {
-        "phase": Phase.PLANNING.value,
-        "plan_status": PlanStatus.AWAITING_APPROVAL.value,
-    }
+    return run_planning(state)
 
 
 def awaiting_approval_node(state: ProjectThreadState) -> dict | Command:
-    transition = resolve_approval_transition(state)
-    if transition == END:
+    transition = resolve_approval_update(state)
+    if transition["goto"] == END:
         return Command(
             update={
                 "phase": Phase.AWAITING_APPROVAL.value,
@@ -46,15 +48,34 @@ def awaiting_approval_node(state: ProjectThreadState) -> dict | Command:
             },
             goto=END,
         )
-    if transition == "build":
-        return Command(update={"phase": Phase.BUILD.value}, goto="build")
-    if transition == "planning":
-        return Command(update={"phase": Phase.PLANNING.value}, goto="planning")
-    return Command(update={"phase": Phase.DONE.value}, goto="done")
+    if transition["goto"] == "build":
+        return Command(update={"phase": Phase.BUILD.value, "plan_status": PlanStatus.APPROVED.value}, goto="build")
+    if transition["goto"] == "planning":
+        return Command(update={"phase": Phase.PLANNING.value, "plan_status": PlanStatus.NEEDS_REVISION.value}, goto="planning")
+    return Command(update={"phase": Phase.DONE.value, "plan_status": transition["plan_status"]}, goto="done")
 
 
-def build_node(state: ProjectThreadState) -> dict:
-    return {"phase": Phase.BUILD.value}
+def _resolve_build_thread_id(runtime: Runtime | None = None) -> str:
+    context = getattr(runtime, "context", None) or {}
+    if isinstance(context, dict):
+        thread_id = context.get("thread_id")
+        if isinstance(thread_id, str) and thread_id:
+            return thread_id
+
+    configurable = get_config().get("configurable", {})
+    thread_id = configurable.get("thread_id") if isinstance(configurable, dict) else None
+    if isinstance(thread_id, str) and thread_id:
+        return thread_id
+
+    return "default"
+
+
+def build_node(state: ProjectThreadState, runtime: Runtime | None = None) -> dict | Command:
+    transition = dispatch_build_phase(state, thread_id=_resolve_build_thread_id(runtime))
+    goto = transition.pop("goto", "qa_gate")
+    if goto == "qa_gate":
+        transition.pop("phase", None)
+    return Command(update=transition, goto=goto)
 
 
 def qa_gate_node(state: ProjectThreadState) -> dict | Command:
@@ -142,7 +163,6 @@ def make_project_team_agent(*, checkpointer=None):
     graph.add_edge("intake", "discovery")
     graph.add_edge("discovery", "planning")
     graph.add_edge("planning", "awaiting_approval")
-    graph.add_edge("build", "qa_gate")
     graph.add_edge("delivery", "done")
     graph.add_edge("done", END)
 

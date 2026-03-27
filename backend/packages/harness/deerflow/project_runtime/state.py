@@ -17,11 +17,9 @@ def merge_agent_reports(
 
 
 def merge_active_work_order_ids(existing: list[str] | None, new: list[str] | None) -> list[str]:
-    if existing is None:
-        return list(dict.fromkeys(new or []))
     if new is None:
-        return list(existing)
-    return list(dict.fromkeys([*existing, *new]))
+        return list(existing or [])
+    return list(dict.fromkeys(new))
 
 
 def _work_order_id(value: WorkOrder | Mapping[str, Any]) -> str | None:
@@ -65,6 +63,7 @@ class ProjectThreadState(ThreadState):
     work_orders: NotRequired[Annotated[list[WorkOrder | dict[str, Any]], merge_work_orders]]
     active_work_order_ids: NotRequired[Annotated[list[str], merge_active_work_order_ids]]
     agent_reports: NotRequired[Annotated[list[AgentReport | dict[str, Any]], merge_agent_reports]]
+    build_error: NotRequired[str | None]
     qa_gate: NotRequired[dict | None]
     delivery_summary: NotRequired[dict | None]
     project_runtime_version: NotRequired[str]
@@ -78,6 +77,7 @@ def make_project_thread_state_defaults() -> dict:
         "work_orders": [],
         "active_work_order_ids": [],
         "agent_reports": [],
+        "build_error": None,
         "qa_gate": None,
         "delivery_summary": None,
         "project_runtime_version": "m1",

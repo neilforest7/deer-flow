@@ -54,10 +54,10 @@ def test_project_thread_state_agent_reports_reducer_appends_parallel_updates():
     assert [report.work_order_id for report in merged] == ["wo-1", "wo-2"]
 
 
-def test_project_thread_state_active_work_order_ids_reducer_deduplicates_in_order():
+def test_project_thread_state_active_work_order_ids_reducer_replaces_with_deduplicated_latest_value():
     merged = merge_active_work_order_ids(["wo-1", "wo-2"], ["wo-2", "wo-3", "wo-1"])
 
-    assert merged == ["wo-1", "wo-2", "wo-3"]
+    assert merged == ["wo-2", "wo-3", "wo-1"]
 
 
 def test_project_thread_state_work_orders_reducer_upserts_by_id_without_reordering():

@@ -1,6 +1,4 @@
 from .config import SubagentConfig
-from .executor import SubagentExecutor, SubagentResult
-from .registry import get_subagent_config, list_subagents
 
 __all__ = [
     "SubagentConfig",
@@ -9,3 +7,23 @@ __all__ = [
     "get_subagent_config",
     "list_subagents",
 ]
+
+
+def __getattr__(name: str):
+    if name in {"SubagentExecutor", "SubagentResult"}:
+        from .executor import SubagentExecutor, SubagentResult
+
+        exports = {
+            "SubagentExecutor": SubagentExecutor,
+            "SubagentResult": SubagentResult,
+        }
+        return exports[name]
+    if name in {"get_subagent_config", "list_subagents"}:
+        from .registry import get_subagent_config, list_subagents
+
+        exports = {
+            "get_subagent_config": get_subagent_config,
+            "list_subagents": list_subagents,
+        }
+        return exports[name]
+    raise AttributeError(name)

@@ -1,6 +1,7 @@
 import json
 from pathlib import Path
 
+import pytest
 from langgraph.graph import END, START, StateGraph
 from langgraph.checkpoint.memory import InMemorySaver
 
@@ -37,7 +38,7 @@ def test_project_team_agent_contains_required_phase_topology():
         ("discovery", "planning", False),
         ("planning", "awaiting_approval", False),
         ("awaiting_approval", "__end__", False),
-        ("build", "qa_gate", False),
+        ("build", "__end__", False),
         ("qa_gate", "__end__", False),
         ("delivery", "done", False),
         ("done", "__end__", False),
@@ -95,23 +96,115 @@ def test_approved_run_materializes_build_before_pausing_at_qa_gate():
     graph = make_project_team_agent(checkpointer=InMemorySaver())
     config = {"configurable": {"thread_id": "build-thread"}, "recursion_limit": 20}
     graph.invoke({"messages": []}, config=config)
+    seen_thread_ids: list[str] = []
+    call_count = 0
 
+    def fake_dispatch(_state, *, thread_id, parent_model=None, available_tools=None, executor_cls=None):
+        nonlocal call_count
+        call_count += 1
+        seen_thread_ids.append(thread_id)
+        return {
+            "phase": Phase.BUILD.value,
+            "work_orders": [
+                {
+                    "id": "wo-backend-implementation",
+                    "owner_agent": "backend-agent",
+                    "title": "Implement project runtime changes",
+                    "goal": "Clarify the project runtime request",
+                    "acceptance_checks": ["uv run pytest backend/tests/test_project_runtime_graph.py"],
+                    "status": WorkOrderStatus.PENDING.value if call_count == 1 else WorkOrderStatus.COMPLETED.value,
+                }
+            ],
+            "active_work_order_ids": [],
+            "agent_reports": [] if call_count == 1 else [
+                {"work_order_id": "wo-backend-implementation", "agent_name": "backend-agent", "summary": "done"}
+            ],
+            "build_error": None,
+            "goto": "build" if call_count == 1 else "qa_gate",
+        }
+
+    monkeypatch = pytest.MonkeyPatch()
+    monkeypatch.setattr("deerflow.project_runtime.graph.dispatch_build_phase", fake_dispatch)
     updates = list(graph.stream({"plan_status": PlanStatus.APPROVED.value}, config=config, stream_mode="updates"))
+    monkeypatch.undo()
 
-    assert any(chunk.get("build") == {"phase": Phase.BUILD.value} for chunk in updates)
+    assert seen_thread_ids == ["build-thread", "build-thread"]
+    assert sum(1 for chunk in updates if chunk.get("build", {}).get("phase") == Phase.BUILD.value) == 1
     assert graph.get_state(config).values["phase"] == Phase.QA_GATE.value
+    assert graph.get_state(config).values["agent_reports"][-1]["work_order_id"] == "wo-backend-implementation"
 
 
 def test_qa_pass_materializes_delivery_before_done():
     graph = make_project_team_agent(checkpointer=InMemorySaver())
     config = {"configurable": {"thread_id": "delivery-thread"}, "recursion_limit": 20}
     graph.invoke({"messages": []}, config=config)
+
+    def fake_dispatch(_state, *, thread_id, parent_model=None, available_tools=None, executor_cls=None):
+        assert thread_id == "delivery-thread"
+        return {
+            "phase": Phase.BUILD.value,
+            "work_orders": [
+                {
+                    "id": "wo-backend-implementation",
+                    "owner_agent": "backend-agent",
+                    "title": "Implement project runtime changes",
+                    "goal": "Clarify the project runtime request",
+                    "acceptance_checks": ["uv run pytest backend/tests/test_project_runtime_graph.py"],
+                    "status": WorkOrderStatus.COMPLETED.value,
+                }
+            ],
+            "active_work_order_ids": [],
+            "agent_reports": [
+                {"work_order_id": "wo-backend-implementation", "agent_name": "backend-agent", "summary": "done"}
+            ],
+            "build_error": None,
+            "goto": "qa_gate",
+        }
+
+    monkeypatch = pytest.MonkeyPatch()
+    monkeypatch.setattr("deerflow.project_runtime.graph.dispatch_build_phase", fake_dispatch)
     graph.invoke({"plan_status": PlanStatus.APPROVED.value}, config=config)
 
     updates = list(graph.stream({"qa_gate": {"result": "pass"}}, config=config, stream_mode="updates"))
+    monkeypatch.undo()
 
     assert any(chunk.get("delivery") == {"phase": Phase.DELIVERY.value} for chunk in updates)
     assert graph.get_state(config).values["phase"] == Phase.DONE.value
+
+
+def test_build_failure_is_checkpointed_without_reusing_default_thread():
+    graph = make_project_team_agent(checkpointer=InMemorySaver())
+    config = {"configurable": {"thread_id": "failure-thread"}, "recursion_limit": 20}
+    graph.invoke({"messages": []}, config=config)
+
+    def fake_dispatch(_state, *, thread_id, parent_model=None, available_tools=None, executor_cls=None):
+        assert thread_id == "failure-thread"
+        return {
+            "phase": Phase.BUILD.value,
+            "work_orders": [
+                {
+                    "id": "wo-backend-implementation",
+                    "owner_agent": "backend-agent",
+                    "title": "Implement project runtime changes",
+                    "goal": "Clarify the project runtime request",
+                    "acceptance_checks": ["uv run pytest backend/tests/test_project_runtime_graph.py"],
+                    "status": WorkOrderStatus.FAILED.value,
+                }
+            ],
+            "active_work_order_ids": [],
+            "agent_reports": [],
+            "build_error": "tool failure",
+            "goto": "__end__",
+        }
+
+    monkeypatch = pytest.MonkeyPatch()
+    monkeypatch.setattr("deerflow.project_runtime.graph.dispatch_build_phase", fake_dispatch)
+    result = graph.invoke({"plan_status": PlanStatus.APPROVED.value}, config=config)
+    monkeypatch.undo()
+
+    assert result["phase"] == Phase.BUILD.value
+    assert result["build_error"] == "tool failure"
+    assert graph.get_state(config).values["work_orders"][0]["status"] == WorkOrderStatus.FAILED.value
 
 
 def test_langgraph_registers_project_team_agent_without_removing_lead_agent():

@@ -152,6 +152,32 @@ http_local() {
     curl --noproxy '127.0.0.1,localhost,::1' -fsS "$@"
 }
 
+retry_capture() {
+    local output_var="$1"
+    local attempts="$2"
+    local delay_seconds="$3"
+    shift 3
+
+    local attempt=""
+    local response=""
+    for attempt in $(seq 1 "$attempts"); do
+        if response="$("$@" 2>/dev/null)"; then
+            printf -v "$output_var" '%s' "$response"
+            return 0
+        fi
+
+        if [ "$attempt" -lt "$attempts" ]; then
+            sleep "$delay_seconds"
+        fi
+    done
+
+    if ! response="$("$@")"; then
+        return 1
+    fi
+
+    printf -v "$output_var" '%s' "$response"
+}
+
 show_failure_diagnostics() {
     local compose_file="$REPO_DIR/docker/docker-compose.yaml"
     if [ -f "$compose_file" ] && command -v docker >/dev/null 2>&1; then
@@ -272,7 +298,7 @@ print_step "Container status"
 compose_cmd ps
 
 print_step "HTTP smoke tests"
-HEALTH_JSON="$(http_local "http://127.0.0.1:$PORT/health")"
+retry_capture HEALTH_JSON 30 1 http_local "http://127.0.0.1:$PORT/health"
 python3 - "$HEALTH_JSON" <<'PY'
 import json, sys
 data = json.loads(sys.argv[1])
@@ -281,7 +307,7 @@ if data.get("status") != "healthy":
 print(f"✓ /health -> {data}")
 PY
 
-MODELS_JSON="$(http_local "http://127.0.0.1:$PORT/api/models")"
+retry_capture MODELS_JSON 15 1 http_local "http://127.0.0.1:$PORT/api/models"
 python3 - "$MODELS_JSON" <<'PY'
 import json, sys
 data = json.loads(sys.argv[1])
@@ -294,9 +320,9 @@ else:
 print(f"✓ /api/models -> {len(models)} model entries")
 PY
 
-THREAD_JSON="$(http_local -X POST "http://127.0.0.1:$PORT/api/langgraph/threads" \
+retry_capture THREAD_JSON 15 1 http_local -X POST "http://127.0.0.1:$PORT/api/langgraph/threads" \
     -H 'Content-Type: application/json' \
-    -d '{}')"
+    -d '{}'
 THREAD_ID="$(python3 - "$THREAD_JSON" <<'PY'
 import json, sys
 data = json.loads(sys.argv[1])

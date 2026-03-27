@@ -249,7 +249,7 @@ def _normalize_factory_checkpointer(checkpointer):
     return checkpointer
 
 
-def make_project_team_agent(config=None, *, checkpointer=None, **_kwargs):
+def make_project_team_agent(config=None, checkpointer=None):
     graph = StateGraph(ProjectThreadState)
     graph.add_node("intake", intake_node)
     graph.add_node("discovery", discovery_node)

@@ -1,3 +1,4 @@
+import inspect
 import json
 from pathlib import Path
 
@@ -19,6 +20,12 @@ def test_project_team_agent_compiles_with_project_thread_state():
     graph = make_project_team_agent()
 
     assert graph.builder.state_schema is ProjectThreadState
+
+
+def test_project_team_agent_factory_signature_stays_langgraph_compatible():
+    parameters = tuple(inspect.signature(make_project_team_agent).parameters)
+
+    assert parameters == ("config", "checkpointer")
 
 
 def test_project_team_agent_ignores_server_checkpointer_config_dict():

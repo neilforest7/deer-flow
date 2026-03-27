@@ -6,8 +6,10 @@ from langgraph.runtime import Runtime
 from langgraph.types import Command
 
 from deerflow.project_runtime.approval import resolve_approval_update
+from deerflow.project_runtime.delivery import build_delivery_summary
 from deerflow.project_runtime.dispatcher import dispatch_build_phase
 from deerflow.project_runtime.planning import run_discovery, run_planning
+from deerflow.project_runtime.qa import run_qa_gate
 from deerflow.project_runtime.state import ProjectThreadState, make_project_thread_state_defaults
 from deerflow.project_runtime.types import Phase, PlanStatus, QAGateResult
 
@@ -55,7 +57,7 @@ def awaiting_approval_node(state: ProjectThreadState) -> dict | Command:
     return Command(update={"phase": Phase.DONE.value, "plan_status": transition["plan_status"]}, goto="done")
 
 
-def _resolve_build_thread_id(runtime: Runtime | None = None) -> str:
+def _resolve_thread_id(runtime: Runtime | None = None) -> str:
     context = getattr(runtime, "context", None) or {}
     if isinstance(context, dict):
         thread_id = context.get("thread_id")
@@ -70,25 +72,51 @@ def _resolve_build_thread_id(runtime: Runtime | None = None) -> str:
     return "default"
 
 
+def _resolve_model_name(runtime: Runtime | None = None) -> str | None:
+    context = getattr(runtime, "context", None) or {}
+    if isinstance(context, dict):
+        model_name = context.get("model_name")
+        if isinstance(model_name, str) and model_name:
+            return model_name
+
+    configurable = get_config().get("configurable", {})
+    model_name = configurable.get("model_name") if isinstance(configurable, dict) else None
+    if isinstance(model_name, str) and model_name:
+        return model_name
+    return None
+
+
 def build_node(state: ProjectThreadState, runtime: Runtime | None = None) -> dict | Command:
-    transition = dispatch_build_phase(state, thread_id=_resolve_build_thread_id(runtime))
+    transition = dispatch_build_phase(
+        state,
+        thread_id=_resolve_thread_id(runtime),
+        parent_model=_resolve_model_name(runtime),
+    )
     goto = transition.pop("goto", "qa_gate")
     if goto == "qa_gate":
         transition.pop("phase", None)
     return Command(update=transition, goto=goto)
 
 
-def qa_gate_node(state: ProjectThreadState) -> dict | Command:
-    transition = resolve_qa_transition(state)
+def qa_gate_node(state: ProjectThreadState, runtime: Runtime | None = None) -> dict | Command:
+    qa_gate = run_qa_gate(
+        state,
+        thread_id=_resolve_thread_id(runtime),
+        parent_model=_resolve_model_name(runtime),
+    )
+    transition = resolve_qa_transition({"qa_gate": qa_gate})
     if transition == END:
-        return Command(update={"phase": Phase.QA_GATE.value}, goto=END)
+        return Command(update={"phase": Phase.QA_GATE.value, "qa_gate": qa_gate}, goto=END)
     if transition == "delivery":
-        return Command(update={"phase": Phase.DELIVERY.value}, goto="delivery")
-    return Command(update={"phase": Phase.PLANNING.value}, goto="planning")
+        return Command(update={"phase": Phase.DELIVERY.value, "qa_gate": qa_gate}, goto="delivery")
+    return Command(update={"phase": Phase.PLANNING.value, "qa_gate": qa_gate}, goto="planning")
 
 
 def delivery_node(state: ProjectThreadState) -> dict:
-    return {"phase": Phase.DELIVERY.value}
+    return {
+        "phase": Phase.DELIVERY.value,
+        "delivery_summary": build_delivery_summary(state),
+    }
 
 
 def done_node(state: ProjectThreadState) -> dict:

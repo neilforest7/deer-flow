@@ -670,7 +670,7 @@ class TestConfigManagement:
         c = DeerFlowClient(checkpointer=None, thinking_enabled=False)
         # Simulate a cached agent
         c._agent = "fake-agent-placeholder"
-        c._agent_config_key = ("a", "b", "c", "d")
+        c._agent_config_key = ("lead_agent", "a", "b", "c", "d")
 
         result = c.update_mcp_config({"test-server": {"enabled": True, "type": "stdio", "command": "echo"}})
         assert "mcp_servers" in result
@@ -695,7 +695,7 @@ class TestConfigManagement:
 
         c = DeerFlowClient(checkpointer=None, thinking_enabled=False)
         c._agent = "fake-agent-placeholder"
-        c._agent_config_key = ("a", "b", "c", "d")
+        c._agent_config_key = ("lead_agent", "a", "b", "c", "d")
 
         # Use a real skill name from the public skills directory
         skills = c.list_skills()

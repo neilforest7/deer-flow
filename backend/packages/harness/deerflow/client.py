@@ -53,6 +53,9 @@ from deerflow.uploads.manager import (
 
 logger = logging.getLogger(__name__)
 
+_LEAD_RUNTIME_NAME = "lead_agent"
+_PROJECT_RUNTIME_NAME = "project_team_agent"
+
 
 @dataclass
 class StreamEvent:
@@ -184,13 +187,19 @@ class DeerFlowClient:
 
     def _get_runnable_config(self, thread_id: str, **overrides) -> RunnableConfig:
         """Build a RunnableConfig for agent invocation."""
+        runtime_name = overrides.get("runtime_name")
+        model_name = overrides.get("model_name", self._model_name)
+        if model_name is None and runtime_name == _PROJECT_RUNTIME_NAME:
+            model_name = getattr(self._app_config.project_runtime, "default_model_name", None)
         configurable = {
             "thread_id": thread_id,
-            "model_name": overrides.get("model_name", self._model_name),
+            "model_name": model_name,
             "thinking_enabled": overrides.get("thinking_enabled", self._thinking_enabled),
             "is_plan_mode": overrides.get("plan_mode", self._plan_mode),
             "subagent_enabled": overrides.get("subagent_enabled", self._subagent_enabled),
         }
+        if runtime_name is not None:
+            configurable["runtime_name"] = runtime_name
         return RunnableConfig(
             configurable=configurable,
             recursion_limit=overrides.get("recursion_limit", 100),
@@ -199,7 +208,9 @@ class DeerFlowClient:
     def _ensure_agent(self, config: RunnableConfig):
         """Create (or recreate) the agent when config-dependent params change."""
         cfg = config.get("configurable", {})
+        runtime_name = cfg.get("runtime_name", _LEAD_RUNTIME_NAME)
         key = (
+            runtime_name,
             cfg.get("model_name"),
             cfg.get("thinking_enabled"),
             cfg.get("is_plan_mode"),
@@ -213,6 +224,21 @@ class DeerFlowClient:
         model_name = cfg.get("model_name")
         subagent_enabled = cfg.get("subagent_enabled", False)
         max_concurrent_subagents = cfg.get("max_concurrent_subagents", 3)
+        runtime_name = cfg.get("runtime_name", _LEAD_RUNTIME_NAME)
+
+        checkpointer = self._checkpointer
+        if checkpointer is None:
+            from deerflow.agents.checkpointer import get_checkpointer
+
+            checkpointer = get_checkpointer()
+
+        if runtime_name == _PROJECT_RUNTIME_NAME:
+            from deerflow.project_runtime.graph import make_project_team_agent
+
+            self._agent = make_project_team_agent(checkpointer=checkpointer)
+            self._agent_config_key = key
+            logger.info("Agent created: runtime=%s, model=%s", runtime_name, model_name)
+            return
 
         kwargs: dict[str, Any] = {
             "model": create_chat_model(name=model_name, thinking_enabled=thinking_enabled),
@@ -225,11 +251,6 @@ class DeerFlowClient:
             ),
             "state_schema": ThreadState,
         }
-        checkpointer = self._checkpointer
-        if checkpointer is None:
-            from deerflow.agents.checkpointer import get_checkpointer
-
-            checkpointer = get_checkpointer()
         if checkpointer is not None:
             kwargs["checkpointer"] = checkpointer
 
@@ -304,6 +325,59 @@ class DeerFlowClient:
             flush_pending_str_parts()
             return "\n".join(pieces) if pieces else ""
         return str(content)
+
+    @staticmethod
+    def _project_values_data(chunk: dict[str, Any]) -> dict[str, Any]:
+        messages = chunk.get("messages", [])
+        data = {
+            "title": chunk.get("title"),
+            "messages": [DeerFlowClient._serialize_message(m) for m in messages],
+            "artifacts": chunk.get("artifacts", []),
+        }
+        for key in (
+            "phase",
+            "plan_status",
+            "project_brief",
+            "work_orders",
+            "active_work_order_ids",
+            "agent_reports",
+            "build_error",
+            "qa_gate",
+            "delivery_summary",
+        ):
+            if key in chunk:
+                data[key] = chunk.get(key)
+        return data
+
+    @staticmethod
+    def _format_project_runtime_text(chunk: dict[str, Any]) -> str:
+        if chunk.get("delivery_summary") is not None:
+            payload = {
+                "phase": chunk.get("phase"),
+                "delivery_summary": chunk.get("delivery_summary"),
+            }
+            return json.dumps(payload, indent=2, sort_keys=True)
+        if chunk.get("qa_gate") is not None:
+            payload = {
+                "phase": chunk.get("phase"),
+                "qa_gate": chunk.get("qa_gate"),
+            }
+            return json.dumps(payload, indent=2, sort_keys=True)
+        if chunk.get("project_brief") is not None or chunk.get("work_orders"):
+            payload = {
+                "phase": chunk.get("phase"),
+                "plan_status": chunk.get("plan_status"),
+                "project_brief": chunk.get("project_brief"),
+                "work_orders": chunk.get("work_orders", []),
+            }
+            return json.dumps(payload, indent=2, sort_keys=True)
+        if chunk.get("build_error"):
+            payload = {
+                "phase": chunk.get("phase"),
+                "build_error": chunk.get("build_error"),
+            }
+            return json.dumps(payload, indent=2, sort_keys=True)
+        return ""
 
     # ------------------------------------------------------------------
     # Public API — conversation
@@ -437,6 +511,112 @@ class DeerFlowClient:
         """
         last_text = ""
         for event in self.stream(message, thread_id=thread_id, **kwargs):
+            if event.type == "messages-tuple" and event.data.get("type") == "ai":
+                content = event.data.get("content", "")
+                if content:
+                    last_text = content
+        return last_text
+
+    def project_stream(
+        self,
+        message: str,
+        *,
+        thread_id: str | None = None,
+        **kwargs,
+    ) -> Generator[StreamEvent, None, None]:
+        """Stream a conversation turn against the project team runtime."""
+        if thread_id is None:
+            thread_id = str(uuid.uuid4())
+
+        config = self._get_runnable_config(thread_id, runtime_name=_PROJECT_RUNTIME_NAME, **kwargs)
+        self._ensure_agent(config)
+
+        state: dict[str, Any] = {"messages": [HumanMessage(content=message)]}
+        context: dict[str, Any] = {"thread_id": thread_id, "model_name": config.get("configurable", {}).get("model_name")}
+        if self._agent_name:
+            context["agent_name"] = self._agent_name
+
+        seen_ids: set[str] = set()
+        cumulative_usage: dict[str, int] = {"input_tokens": 0, "output_tokens": 0, "total_tokens": 0}
+        last_synthesized_text = ""
+        synthetic_message_index = 0
+
+        for chunk in self._agent.stream(state, config=config, context=context, stream_mode="values"):
+            messages = chunk.get("messages", [])
+            emitted_ai_text = False
+
+            for msg in messages:
+                msg_id = getattr(msg, "id", None)
+                if msg_id and msg_id in seen_ids:
+                    continue
+                if msg_id:
+                    seen_ids.add(msg_id)
+
+                if isinstance(msg, AIMessage):
+                    usage = getattr(msg, "usage_metadata", None)
+                    if usage:
+                        cumulative_usage["input_tokens"] += usage.get("input_tokens", 0) or 0
+                        cumulative_usage["output_tokens"] += usage.get("output_tokens", 0) or 0
+                        cumulative_usage["total_tokens"] += usage.get("total_tokens", 0) or 0
+
+                    if msg.tool_calls:
+                        yield StreamEvent(
+                            type="messages-tuple",
+                            data={
+                                "type": "ai",
+                                "content": "",
+                                "id": msg_id,
+                                "tool_calls": [{"name": tc["name"], "args": tc["args"], "id": tc.get("id")} for tc in msg.tool_calls],
+                            },
+                        )
+
+                    text = self._extract_text(msg.content)
+                    if text:
+                        emitted_ai_text = True
+                        event_data: dict[str, Any] = {"type": "ai", "content": text, "id": msg_id}
+                        if usage:
+                            event_data["usage_metadata"] = {
+                                "input_tokens": usage.get("input_tokens", 0) or 0,
+                                "output_tokens": usage.get("output_tokens", 0) or 0,
+                                "total_tokens": usage.get("total_tokens", 0) or 0,
+                            }
+                        yield StreamEvent(type="messages-tuple", data=event_data)
+
+                elif isinstance(msg, ToolMessage):
+                    yield StreamEvent(
+                        type="messages-tuple",
+                        data={
+                            "type": "tool",
+                            "content": self._extract_text(msg.content),
+                            "name": getattr(msg, "name", None),
+                            "tool_call_id": getattr(msg, "tool_call_id", None),
+                            "id": msg_id,
+                        },
+                    )
+
+            values_data = self._project_values_data(chunk)
+            yield StreamEvent(type="values", data=values_data)
+
+            if not emitted_ai_text:
+                synthesized_text = self._format_project_runtime_text(chunk)
+                if synthesized_text and synthesized_text != last_synthesized_text:
+                    synthetic_message_index += 1
+                    last_synthesized_text = synthesized_text
+                    yield StreamEvent(
+                        type="messages-tuple",
+                        data={
+                            "type": "ai",
+                            "content": synthesized_text,
+                            "id": f"project-runtime-{synthetic_message_index}",
+                        },
+                    )
+
+        yield StreamEvent(type="end", data={"usage": cumulative_usage})
+
+    def project_chat(self, message: str, *, thread_id: str | None = None, **kwargs) -> str:
+        """Send a message to the project team runtime and return the final text response."""
+        last_text = ""
+        for event in self.project_stream(message, thread_id=thread_id, **kwargs):
             if event.type == "messages-tuple" and event.data.get("type") == "ai":
                 content = event.data.get("content", "")
                 if content:

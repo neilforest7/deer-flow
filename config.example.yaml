@@ -393,6 +393,18 @@ sandbox:
 #       timeout_seconds: 300   # 5 minutes for quick command execution
 
 # ============================================================================
+# Project Team Runtime
+# ============================================================================
+# Optional configuration for the explicit `project_team_agent` runtime.
+# This runtime is selected only when the caller targets `project_team_agent`
+# directly or uses `DeerFlowClient.project_chat()` / `project_stream()`.
+project_runtime:
+  # Specialists allowed to see `invoke_acp_agent` when ACP agents are configured.
+  acp_allowed_specialists: []
+  # Optional default model override for project runtime calls.
+  default_model_name: null
+
+# ============================================================================
 # ACP Agents Configuration
 # ============================================================================
 # Configure external ACP-compatible agents for the built-in `invoke_acp_agent` tool.

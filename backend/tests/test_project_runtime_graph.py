@@ -2,8 +2,8 @@ import json
 from pathlib import Path
 
 import pytest
-from langgraph.graph import END, START, StateGraph
 from langgraph.checkpoint.memory import InMemorySaver
+from langgraph.graph import END, START, StateGraph
 
 from deerflow.project_runtime import Phase, PlanStatus, ProjectThreadState
 from deerflow.project_runtime.graph import (
@@ -92,17 +92,19 @@ def test_initial_run_pauses_at_awaiting_approval_without_recursing():
     assert graph.get_state(config).values["phase"] == Phase.AWAITING_APPROVAL.value
 
 
-def test_approved_run_materializes_build_before_pausing_at_qa_gate():
+def test_approved_run_materializes_build_before_pausing_at_qa_gate_when_qa_blocks():
     graph = make_project_team_agent(checkpointer=InMemorySaver())
-    config = {"configurable": {"thread_id": "build-thread"}, "recursion_limit": 20}
+    config = {"configurable": {"thread_id": "build-thread", "model_name": "project-model"}, "recursion_limit": 20}
     graph.invoke({"messages": []}, config=config)
     seen_thread_ids: list[str] = []
+    seen_models: list[str | None] = []
     call_count = 0
 
     def fake_dispatch(_state, *, thread_id, parent_model=None, available_tools=None, executor_cls=None):
         nonlocal call_count
         call_count += 1
         seen_thread_ids.append(thread_id)
+        seen_models.append(parent_model)
         return {
             "phase": Phase.BUILD.value,
             "work_orders": [
@@ -125,10 +127,19 @@ def test_approved_run_materializes_build_before_pausing_at_qa_gate():
 
     monkeypatch = pytest.MonkeyPatch()
     monkeypatch.setattr("deerflow.project_runtime.graph.dispatch_build_phase", fake_dispatch)
+    monkeypatch.setattr(
+        "deerflow.project_runtime.graph.run_qa_gate",
+        lambda state, *, thread_id, parent_model=None, available_tools=None, executor_cls=None: {
+            "result": "blocked",
+            "findings": ["Awaiting explicit QA follow-up"],
+            "required_rework": [],
+        },
+    )
     updates = list(graph.stream({"plan_status": PlanStatus.APPROVED.value}, config=config, stream_mode="updates"))
     monkeypatch.undo()
 
     assert seen_thread_ids == ["build-thread", "build-thread"]
+    assert seen_models == ["project-model", "project-model"]
     assert sum(1 for chunk in updates if chunk.get("build", {}).get("phase") == Phase.BUILD.value) == 1
     assert graph.get_state(config).values["phase"] == Phase.QA_GATE.value
     assert graph.get_state(config).values["agent_reports"][-1]["work_order_id"] == "wo-backend-implementation"
@@ -136,11 +147,12 @@ def test_approved_run_materializes_build_before_pausing_at_qa_gate():
 
 def test_qa_pass_materializes_delivery_before_done():
     graph = make_project_team_agent(checkpointer=InMemorySaver())
-    config = {"configurable": {"thread_id": "delivery-thread"}, "recursion_limit": 20}
+    config = {"configurable": {"thread_id": "delivery-thread", "model_name": "delivery-model"}, "recursion_limit": 20}
     graph.invoke({"messages": []}, config=config)
 
     def fake_dispatch(_state, *, thread_id, parent_model=None, available_tools=None, executor_cls=None):
         assert thread_id == "delivery-thread"
+        assert parent_model == "delivery-model"
         return {
             "phase": Phase.BUILD.value,
             "work_orders": [
@@ -163,12 +175,20 @@ def test_qa_pass_materializes_delivery_before_done():
 
     monkeypatch = pytest.MonkeyPatch()
     monkeypatch.setattr("deerflow.project_runtime.graph.dispatch_build_phase", fake_dispatch)
-    graph.invoke({"plan_status": PlanStatus.APPROVED.value}, config=config)
-
-    updates = list(graph.stream({"qa_gate": {"result": "pass"}}, config=config, stream_mode="updates"))
+    monkeypatch.setattr(
+        "deerflow.project_runtime.graph.run_qa_gate",
+        lambda state, *, thread_id, parent_model=None, available_tools=None, executor_cls=None: {
+            "result": "pass",
+            "findings": [f"model={parent_model}"],
+            "required_rework": [],
+        },
+    )
+    updates = list(graph.stream({"plan_status": PlanStatus.APPROVED.value}, config=config, stream_mode="updates"))
     monkeypatch.undo()
 
-    assert any(chunk.get("delivery") == {"phase": Phase.DELIVERY.value} for chunk in updates)
+    assert any(chunk.get("delivery", {}).get("phase") == Phase.DELIVERY.value for chunk in updates)
+    assert "delivery_summary" in graph.get_state(config).values
+    assert "model=delivery-model" in graph.get_state(config).values["qa_gate"]["findings"]
     assert graph.get_state(config).values["phase"] == Phase.DONE.value
 
 

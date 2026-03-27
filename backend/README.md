@@ -45,13 +45,24 @@ DeerFlow is a LangGraph-based AI super agent with sandbox execution, persistent 
 
 ### Lead Agent
 
-The single LangGraph agent (`lead_agent`) is the runtime entry point, created via `make_lead_agent(config)`. It combines:
+The default LangGraph agent (`lead_agent`) is the standard runtime entry point, created via `make_lead_agent(config)`. It combines:
 
 - **Dynamic model selection** with thinking and vision support
 - **Middleware chain** for cross-cutting concerns (9 middlewares)
 - **Tool system** with sandbox, MCP, community, and built-in tools
 - **Subagent delegation** for parallel task execution
 - **System prompt** with skills injection, memory context, and working directory guidance
+
+### Project Team Runtime
+
+An optional second LangGraph runtime (`project_team_agent`) is registered for explicit delivery workflows. It keeps `lead_agent` behavior unchanged by default and uses a fixed phase graph:
+
+- `intake -> discovery -> planning -> awaiting_approval -> build -> qa_gate -> delivery -> done`
+- `build` starts only after explicit in-conversation approval
+- `qa_gate` returns `pass`, `fail`, or `blocked`
+- `delivery` emits a canonical summary with completed work, artifacts, verification, and follow-ups
+
+Select this runtime only by targeting `project_team_agent` directly or by using the embedded client helpers `project_chat()` / `project_stream()`.
 
 ### Middleware Chain
 

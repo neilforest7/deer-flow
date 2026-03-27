@@ -1,6 +1,7 @@
 from dataclasses import replace
 from typing import Protocol
 
+from deerflow.config import get_app_config
 from deerflow.project_runtime.types import Phase
 from deerflow.subagents.builtins import BASH_AGENT_CONFIG, GENERAL_PURPOSE_CONFIG
 from deerflow.subagents.config import SubagentConfig
@@ -109,7 +110,6 @@ _TOOL_POLICIES: dict[str, frozenset[str]] = {
     "bash": frozenset({"bash", "ls", "read_file", "write_file", "str_replace"}),
 }
 
-_ACP_ENABLED_BY_DEFAULT = frozenset()
 _TASK_TOOL_NAME = "task"
 _ACP_TOOL_NAME = "invoke_acp_agent"
 
@@ -130,7 +130,13 @@ def get_default_phase_owners(phase: Phase) -> tuple[str, ...]:
 
 
 def specialist_uses_acp_by_default(name: str) -> bool:
-    return name in _ACP_ENABLED_BY_DEFAULT
+    try:
+        app_config = get_app_config()
+    except FileNotFoundError:
+        return False
+    project_runtime = getattr(app_config, "project_runtime", None)
+    allowed = getattr(project_runtime, "acp_allowed_specialists", [])
+    return name in allowed
 
 
 def tool_names_for_specialist(

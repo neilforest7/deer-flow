@@ -13,6 +13,7 @@ def test_project_thread_state_defaults_are_stable():
         "work_orders": [],
         "active_work_order_ids": [],
         "agent_reports": [],
+        "build_error": None,
         "qa_gate": None,
         "delivery_summary": None,
         "project_runtime_version": "m1",

@@ -130,6 +130,7 @@ def dispatch_work_order(
     work_order: WorkOrder | Mapping[str, Any],
     *,
     thread_id: str | None,
+    parent_model: str | None = None,
     available_tools: list[Any] | None = None,
     executor_cls=None,
 ) -> AgentReport:
@@ -153,7 +154,7 @@ def dispatch_work_order(
     executor = executor_cls(
         config=scoped_config,
         tools=available_tools,
-        parent_model=None,
+        parent_model=parent_model,
         sandbox_state=state.get("sandbox"),
         thread_data=state.get("thread_data"),
         thread_id=thread_id,
@@ -183,6 +184,7 @@ def dispatch_build_step(
     state: Mapping[str, Any],
     *,
     thread_id: str | None,
+    parent_model: str | None = None,
     available_tools: list[Any] | None = None,
     executor_cls=None,
 ) -> DispatchBuildOutcome:
@@ -200,6 +202,7 @@ def dispatch_build_step(
             state,
             next_work_order,
             thread_id=thread_id,
+            parent_model=parent_model,
             available_tools=available_tools,
             executor_cls=executor_cls,
         )
@@ -285,6 +288,7 @@ def dispatch_build_phase(
     outcome = dispatch_build_step(
         state,
         thread_id=thread_id,
+        parent_model=parent_model,
         available_tools=available_tools,
         executor_cls=executor_cls,
     )

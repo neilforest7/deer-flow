@@ -105,6 +105,7 @@ def test_dispatch_build_step_completes_work_order_and_appends_report():
             captured["config"] = config
             captured["tools"] = tools
             captured["thread_id"] = thread_id
+            captured["parent_model"] = parent_model
 
         def execute(self, task):
             captured["task"] = task
@@ -118,6 +119,7 @@ def test_dispatch_build_step_completes_work_order_and_appends_report():
     outcome = dispatch_build_step(
         _state_with_work_orders(),
         thread_id="thread-123",
+        parent_model="project-model",
         available_tools=[
             SimpleNamespace(name="read_file"),
             SimpleNamespace(name="write_file"),
@@ -135,6 +137,7 @@ def test_dispatch_build_step_completes_work_order_and_appends_report():
     assert outcome.update["agent_reports"][0]["summary"] == "Implemented frontend wiring"
     assert captured["config"].name == "frontend-agent"
     assert captured["config"].tools == ["read_file", "write_file", "web_search"]
+    assert captured["parent_model"] == "project-model"
     assert captured["thread_id"] == "thread-123"
     assert "thread-123" in captured["task"]
 

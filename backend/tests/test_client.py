@@ -433,7 +433,7 @@ class TestEnsureAgent:
         """_ensure_agent does not recreate if config key unchanged."""
         mock_agent = MagicMock()
         client._agent = mock_agent
-        client._agent_config_key = (None, True, False, False)
+        client._agent_config_key = ("lead_agent", None, True, False, False)
 
         config = client._get_runnable_config("t1")
         client._ensure_agent(config)
@@ -2356,7 +2356,7 @@ class TestBugAgentInvalidationInconsistency:
     def test_update_mcp_resets_config_key(self, client):
         """After update_mcp_config, both _agent and _agent_config_key are None."""
         client._agent = MagicMock()
-        client._agent_config_key = ("model", True, False, False)
+        client._agent_config_key = ("lead_agent", "model", True, False, False)
 
         current_config = MagicMock()
         current_config.skills = {}
@@ -2380,7 +2380,7 @@ class TestBugAgentInvalidationInconsistency:
     def test_update_skill_resets_config_key(self, client):
         """After update_skill, both _agent and _agent_config_key are None."""
         client._agent = MagicMock()
-        client._agent_config_key = ("model", True, False, False)
+        client._agent_config_key = ("lead_agent", "model", True, False, False)
 
         skill = MagicMock()
         skill.name = "s1"

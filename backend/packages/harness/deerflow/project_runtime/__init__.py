@@ -9,6 +9,7 @@ from .dispatcher import (
     dispatch_work_order,
     select_runnable_work_orders,
 )
+from .delivery import build_delivery_summary
 from .graph import make_project_team_agent
 from .planning import (
     build_discovery_result,
@@ -22,6 +23,7 @@ from .planning import (
     validate_planning_output,
     validate_project_brief,
 )
+from .qa import AcceptanceCheckResult, run_acceptance_check, run_qa_gate
 from .registry import (
     get_default_phase_owners,
     get_specialist_config,
@@ -44,6 +46,7 @@ from .types import (
 
 __all__ = [
     "AgentReport",
+    "AcceptanceCheckResult",
     "DispatchBuildOutcome",
     "Phase",
     "PlanningOutput",
@@ -56,6 +59,7 @@ __all__ = [
     "WorkOrderStatus",
     "apply_dispatch_update",
     "build_can_proceed_to_qa",
+    "build_delivery_summary",
     "build_discovery_result",
     "build_planning_result",
     "build_specialist_task_input",
@@ -71,6 +75,8 @@ __all__ = [
     "parse_approval_intent",
     "run_discovery",
     "run_planning",
+    "run_acceptance_check",
+    "run_qa_gate",
     "select_runnable_work_orders",
     "specialist_uses_acp_by_default",
     "synthesize_planning_output",

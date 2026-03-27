@@ -1,3 +1,4 @@
+from collections.abc import Mapping
 from typing import Literal
 
 from langgraph.config import get_config
@@ -234,7 +235,21 @@ def resolve_qa_transition(state: ProjectThreadState) -> Literal["delivery", "pla
     return END
 
 
-def make_project_team_agent(*, checkpointer=None):
+def _normalize_factory_checkpointer(checkpointer):
+    """Normalize LangGraph factory kwargs for embedded and server execution.
+
+    The embedded client passes an actual saver instance. The LangGraph server
+    may pass its parsed checkpointer config dict into the factory when
+    resolving the graph. In that case, persistence is managed by the server
+    runtime and we should compile without overriding the checkpointer.
+    """
+
+    if isinstance(checkpointer, Mapping):
+        return None
+    return checkpointer
+
+
+def make_project_team_agent(config=None, *, checkpointer=None, **_kwargs):
     graph = StateGraph(ProjectThreadState)
     graph.add_node("intake", intake_node)
     graph.add_node("discovery", discovery_node)
@@ -265,4 +280,4 @@ def make_project_team_agent(*, checkpointer=None):
     graph.add_edge("delivery", "done")
     graph.add_edge("done", END)
 
-    return graph.compile(checkpointer=checkpointer)
+    return graph.compile(checkpointer=_normalize_factory_checkpointer(checkpointer))

@@ -21,6 +21,12 @@ def test_project_team_agent_compiles_with_project_thread_state():
     assert graph.builder.state_schema is ProjectThreadState
 
 
+def test_project_team_agent_ignores_server_checkpointer_config_dict():
+    graph = make_project_team_agent(checkpointer={"path": "fake.module:make_checkpointer"})
+
+    assert graph.builder.state_schema is ProjectThreadState
+
+
 def test_project_team_agent_contains_required_phase_topology():
     graph = make_project_team_agent()
     edges = {(edge.source, edge.target, edge.conditional) for edge in graph.get_graph().edges}

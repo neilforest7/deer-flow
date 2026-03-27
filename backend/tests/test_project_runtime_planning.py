@@ -1,12 +1,17 @@
 from langchain_core.messages import HumanMessage
 from langgraph.checkpoint.memory import InMemorySaver
+from types import SimpleNamespace
 
 from deerflow.project_runtime import (
     PlanningOutput,
     Phase,
     build_discovery_result,
     build_planning_result,
+    execute_discovery_phase,
+    execute_planning_phase,
     make_project_team_agent,
+    run_discovery,
+    run_planning,
     synthesize_project_brief,
     synthesize_work_orders,
     validate_planning_output,
@@ -68,6 +73,167 @@ def test_discovery_scope_does_not_treat_build_as_ui():
     )
 
     assert brief.scope == ["backend runtime"]
+
+
+def test_execute_discovery_phase_merges_multiple_specialist_briefs():
+    class DiscoveryExecutor:
+        def __init__(self, config, tools, parent_model=None, sandbox_state=None, thread_data=None, thread_id=None):
+            self.config = config
+
+        def execute(self, task):
+            payloads = {
+                "discovery-agent": {
+                    "objective": "Ship runtime",
+                    "scope": ["backend runtime"],
+                    "constraints": ["Keep lead_agent behavior unchanged"],
+                    "deliverables": ["Validated project brief"],
+                    "success_criteria": ["Plan is clear"],
+                },
+                "architect-agent": {
+                    "objective": "Ship runtime",
+                    "scope": ["service boundaries"],
+                    "constraints": ["Respect thread isolation"],
+                    "deliverables": ["Architecture notes"],
+                    "success_criteria": ["Dependencies mapped"],
+                },
+            }
+            return SimpleNamespace(status="completed", result=str(payloads[self.config.name]).replace("'", '"'))
+
+    brief, specialists, used_specialists = execute_discovery_phase(
+        {"messages": [HumanMessage(content="Implement backend runtime approval flow")]},
+        thread_id="thread-1",
+        available_tools=[SimpleNamespace(name="read_file"), SimpleNamespace(name="web_search")],
+        executor_cls=DiscoveryExecutor,
+    )
+
+    assert used_specialists is True
+    assert specialists == ["discovery-agent", "architect-agent"]
+    assert "backend runtime" in brief.scope
+    assert "service boundaries" in brief.scope
+
+
+def test_execute_planning_phase_validates_planner_output():
+    class PlannerExecutor:
+        def __init__(self, config, tools, parent_model=None, sandbox_state=None, thread_data=None, thread_id=None):
+            self.config = config
+
+        def execute(self, task):
+            payload = {
+                "project_brief": {
+                    "objective": "Ship runtime",
+                    "scope": ["backend runtime"],
+                    "constraints": ["Keep lead_agent behavior unchanged"],
+                    "deliverables": ["Validated work orders"],
+                    "success_criteria": ["Tests pass"],
+                },
+                "work_orders": [
+                    {
+                        "id": "wo-1",
+                        "owner_agent": "backend-agent",
+                        "title": "Backend implementation",
+                        "goal": "Ship runtime",
+                        "read_scope": ["backend/docs"],
+                        "write_scope": ["backend/packages/harness/deerflow/project_runtime"],
+                        "dependencies": [],
+                        "acceptance_checks": ["pytest"],
+                        "status": "pending",
+                    }
+                ],
+            }
+            return SimpleNamespace(status="completed", result=str(payload).replace("'", '"'))
+
+    output = execute_planning_phase(
+        {
+            "project_brief": {
+                "objective": "Ship runtime",
+                "scope": ["backend runtime"],
+                "constraints": ["Keep lead_agent behavior unchanged"],
+                "deliverables": ["Validated work orders"],
+                "success_criteria": ["Tests pass"],
+            },
+            "messages": [HumanMessage(content="Implement backend runtime approval flow")],
+        },
+        thread_id="thread-1",
+        available_tools=[SimpleNamespace(name="read_file"), SimpleNamespace(name="web_search")],
+        executor_cls=PlannerExecutor,
+    )
+
+    assert output.work_orders[0].owner_agent == "backend-agent"
+
+
+def test_run_discovery_falls_back_to_deterministic_when_specialist_execution_fails(monkeypatch):
+    class FailingExecutor:
+        def __init__(self, config, tools, parent_model=None, sandbox_state=None, thread_data=None, thread_id=None):
+            pass
+
+        def execute(self, task):
+            return SimpleNamespace(status="failed", error="boom")
+
+    monkeypatch.setattr("deerflow.project_runtime.planning._phase_specialists_enabled", lambda: True)
+    monkeypatch.setattr("deerflow.project_runtime.planning._deterministic_phase_fallback_allowed", lambda: True)
+
+    result = run_discovery(
+        {"messages": [HumanMessage(content="Implement backend runtime approval flow")]},
+        thread_id="thread-1",
+        available_tools=[SimpleNamespace(name="read_file")],
+        executor_cls=FailingExecutor,
+    )
+
+    assert result["phase_artifacts"]["discovery"]["mode"] == "deterministic"
+    assert result["project_brief"]["objective"] == "Implement backend runtime approval flow"
+
+
+def test_run_planning_uses_specialist_output_when_enabled(monkeypatch):
+    class PlannerExecutor:
+        def __init__(self, config, tools, parent_model=None, sandbox_state=None, thread_data=None, thread_id=None):
+            self.config = config
+
+        def execute(self, task):
+            payload = {
+                "project_brief": {
+                    "objective": "Ship runtime",
+                    "scope": ["backend runtime"],
+                    "constraints": ["Keep lead_agent behavior unchanged"],
+                    "deliverables": ["Validated work orders"],
+                    "success_criteria": ["Tests pass"],
+                },
+                "work_orders": [
+                    {
+                        "id": "wo-1",
+                        "owner_agent": "backend-agent",
+                        "title": "Backend implementation",
+                        "goal": "Ship runtime",
+                        "read_scope": [],
+                        "write_scope": [],
+                        "dependencies": [],
+                        "acceptance_checks": ["pytest"],
+                        "status": "pending",
+                    }
+                ],
+            }
+            return SimpleNamespace(status="completed", result=str(payload).replace("'", '"'))
+
+    monkeypatch.setattr("deerflow.project_runtime.planning._phase_specialists_enabled", lambda: True)
+    monkeypatch.setattr("deerflow.project_runtime.planning._deterministic_phase_fallback_allowed", lambda: True)
+
+    result = run_planning(
+        {
+            "project_brief": {
+                "objective": "Ship runtime",
+                "scope": ["backend runtime"],
+                "constraints": ["Keep lead_agent behavior unchanged"],
+                "deliverables": ["Validated work orders"],
+                "success_criteria": ["Tests pass"],
+            },
+            "messages": [HumanMessage(content="Implement backend runtime approval flow")],
+        },
+        thread_id="thread-1",
+        available_tools=[SimpleNamespace(name="read_file"), SimpleNamespace(name="web_search")],
+        executor_cls=PlannerExecutor,
+    )
+
+    assert result["phase_artifacts"]["planning"]["mode"] == "specialist"
+    assert result["work_orders"][0]["id"] == "wo-1"
 
 
 def test_validate_planning_output_rejects_unknown_dependencies():

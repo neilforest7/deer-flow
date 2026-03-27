@@ -3,6 +3,7 @@ from pydantic import ValidationError
 
 from deerflow.project_runtime import (
     AgentReport,
+    DeliverySummary,
     Phase,
     PlanStatus,
     PlanningOutput,
@@ -113,6 +114,19 @@ def test_qa_gate_accepts_canonical_result():
     )
 
     assert qa_gate.result is QAGateResult.PASS
+
+
+def test_delivery_summary_accepts_canonical_payload():
+    summary = DeliverySummary.model_validate(
+        {
+            "completed_work": [{"work_order_id": "wo-1", "title": "Ship runtime", "summary": "done"}],
+            "artifacts": ["backend/packages/harness/deerflow/project_runtime/graph.py"],
+            "verification": ["pytest -q"],
+            "follow_ups": ["broader regression coverage"],
+        }
+    )
+
+    assert summary.completed_work[0].work_order_id == "wo-1"
 
 
 def test_planning_output_rejects_malformed_planner_payload():

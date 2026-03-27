@@ -25,6 +25,42 @@ def build_discovery_prompt(*, latest_user_request: str, existing_brief: dict[str
     )
 
 
+def build_delivery_prompt(
+    *,
+    project_brief: dict[str, Any] | None,
+    work_orders: list[dict[str, Any]],
+    agent_reports: list[dict[str, Any]],
+    qa_gate: dict[str, Any] | None,
+    artifacts: list[str],
+) -> str:
+    payload = {
+        "project_brief": project_brief,
+        "work_orders": work_orders,
+        "agent_reports": agent_reports,
+        "qa_gate": qa_gate,
+        "artifacts": artifacts,
+        "required_schema": {
+            "completed_work": [
+                {
+                    "work_order_id": "string",
+                    "title": "string",
+                    "summary": "string",
+                }
+            ],
+            "artifacts": ["string"],
+            "verification": ["string"],
+            "follow_ups": ["string"],
+        },
+    }
+    return "\n".join(
+        [
+            "Create a canonical delivery summary for the project runtime.",
+            "Return JSON only.",
+            json.dumps(payload, ensure_ascii=True, indent=2),
+        ]
+    )
+
+
 def build_planning_prompt(
     *,
     project_brief: dict[str, Any],

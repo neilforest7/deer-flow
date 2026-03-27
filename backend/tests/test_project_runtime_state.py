@@ -17,6 +17,8 @@ def test_project_thread_state_defaults_are_stable():
         "qa_gate": None,
         "delivery_summary": None,
         "project_runtime_version": "m1",
+        "phase_artifacts": {},
+        "phase_attempts": {},
     }
 
 

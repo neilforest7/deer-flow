@@ -6,7 +6,7 @@ from langgraph.runtime import Runtime
 from langgraph.types import Command
 
 from deerflow.project_runtime.approval import resolve_approval_update
-from deerflow.project_runtime.delivery import build_delivery_summary
+from deerflow.project_runtime.delivery import run_delivery
 from deerflow.project_runtime.dispatcher import dispatch_build_phase
 from deerflow.project_runtime.planning import run_discovery, run_planning
 from deerflow.project_runtime.qa import run_qa_gate
@@ -32,12 +32,20 @@ def intake_node(state: ProjectThreadState) -> dict:
     return defaults
 
 
-def discovery_node(state: ProjectThreadState) -> dict:
-    return run_discovery(state)
+def discovery_node(state: ProjectThreadState, runtime: Runtime | None = None) -> dict:
+    return run_discovery(
+        state,
+        thread_id=_resolve_thread_id(runtime),
+        parent_model=_resolve_model_name(runtime),
+    )
 
 
-def planning_node(state: ProjectThreadState) -> dict:
-    return run_planning(state)
+def planning_node(state: ProjectThreadState, runtime: Runtime | None = None) -> dict:
+    return run_planning(
+        state,
+        thread_id=_resolve_thread_id(runtime),
+        parent_model=_resolve_model_name(runtime),
+    )
 
 
 def awaiting_approval_node(state: ProjectThreadState) -> dict | Command:
@@ -112,11 +120,12 @@ def qa_gate_node(state: ProjectThreadState, runtime: Runtime | None = None) -> d
     return Command(update={"phase": Phase.PLANNING.value, "qa_gate": qa_gate}, goto="planning")
 
 
-def delivery_node(state: ProjectThreadState) -> dict:
-    return {
-        "phase": Phase.DELIVERY.value,
-        "delivery_summary": build_delivery_summary(state),
-    }
+def delivery_node(state: ProjectThreadState, runtime: Runtime | None = None) -> dict:
+    return run_delivery(
+        state,
+        thread_id=_resolve_thread_id(runtime),
+        parent_model=_resolve_model_name(runtime),
+    )
 
 
 def done_node(state: ProjectThreadState) -> dict:

@@ -9,11 +9,13 @@ from .dispatcher import (
     dispatch_work_order,
     select_runnable_work_orders,
 )
-from .delivery import build_delivery_summary
+from .delivery import build_delivery_summary, execute_delivery_phase, run_delivery
 from .graph import make_project_team_agent
 from .planning import (
     build_discovery_result,
     build_planning_result,
+    execute_discovery_phase,
+    execute_planning_phase,
     get_latest_user_message_text,
     run_discovery,
     run_planning,
@@ -34,6 +36,8 @@ from .registry import (
 from .state import ProjectThreadState, make_project_thread_state_defaults
 from .types import (
     AgentReport,
+    DeliveryCompletedWork,
+    DeliverySummary,
     Phase,
     PlanningOutput,
     PlanStatus,
@@ -47,6 +51,8 @@ from .types import (
 __all__ = [
     "AgentReport",
     "AcceptanceCheckResult",
+    "DeliveryCompletedWork",
+    "DeliverySummary",
     "DispatchBuildOutcome",
     "Phase",
     "PlanningOutput",
@@ -66,6 +72,9 @@ __all__ = [
     "dispatch_build_phase",
     "dispatch_build_step",
     "dispatch_work_order",
+    "execute_delivery_phase",
+    "execute_discovery_phase",
+    "execute_planning_phase",
     "get_default_phase_owners",
     "get_latest_user_message_text",
     "get_specialist_config",
@@ -73,6 +82,7 @@ __all__ = [
     "make_project_team_agent",
     "make_project_thread_state_defaults",
     "parse_approval_intent",
+    "run_delivery",
     "run_discovery",
     "run_planning",
     "run_acceptance_check",

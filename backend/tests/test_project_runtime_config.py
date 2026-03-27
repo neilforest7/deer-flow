@@ -19,6 +19,8 @@ def test_app_config_loads_project_runtime_allowlist(tmp_path, monkeypatch):
               acp_allowed_specialists:
                 - backend-agent
               default_model_name: qa-model
+              enable_phase_specialists: true
+              allow_deterministic_phase_fallback: false
             """
         ).strip()
         + "\n",
@@ -32,3 +34,5 @@ def test_app_config_loads_project_runtime_allowlist(tmp_path, monkeypatch):
 
     assert config.project_runtime.acp_allowed_specialists == ["backend-agent"]
     assert config.project_runtime.default_model_name == "qa-model"
+    assert config.project_runtime.enable_phase_specialists is True
+    assert config.project_runtime.allow_deterministic_phase_fallback is False

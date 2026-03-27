@@ -95,3 +95,5 @@ def test_specialist_config_is_resolved_deterministically():
     assert config is not None
     assert config.name == "backend-agent"
     assert "task" in (config.disallowed_tools or [])
+    assert config.max_turns == 100
+    assert "stop immediately" in config.system_prompt.lower()

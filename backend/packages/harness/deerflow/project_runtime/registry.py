@@ -6,6 +6,8 @@ from deerflow.project_runtime.types import Phase
 from deerflow.subagents.builtins import BASH_AGENT_CONFIG, GENERAL_PURPOSE_CONFIG
 from deerflow.subagents.config import SubagentConfig
 
+_PROJECT_RUNTIME_SPECIALIST_MAX_TURNS = 100
+
 
 class _NamedTool(Protocol):
     name: str
@@ -21,9 +23,15 @@ def _make_specialist(
     return SubagentConfig(
         name=name,
         description=description,
-        system_prompt=f"You are {name}. Execute only the scoped work assigned by the project runtime and report concise results.",
+        system_prompt=(
+            f"You are {name}. Execute only the scoped work assigned by the project runtime.\n"
+            "Do not broaden scope beyond the current work order.\n"
+            "When the requested implementation or verification is complete, stop immediately and return a concise final summary.\n"
+            "Do not keep exploring once the scoped work is satisfied."
+        ),
         tools=tools,
         disallowed_tools=disallowed_tools or ["task"],
+        max_turns=_PROJECT_RUNTIME_SPECIALIST_MAX_TURNS,
     )
 
 

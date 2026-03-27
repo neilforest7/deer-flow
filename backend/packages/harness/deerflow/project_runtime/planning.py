@@ -21,6 +21,11 @@ _DEFAULT_DELIVERABLES = [
 _DEFAULT_SUCCESS_CRITERIA = [
     "Project runtime pauses in awaiting_approval with canonical state",
 ]
+_FRONTEND_TOKENS = frozenset({"frontend", "ui"})
+_BACKEND_RUNTIME_TOKENS = frozenset(
+    {"backend", "runtime", "api", "service", "integration", "contract", "data", "database", "schema"}
+)
+_EXPLICIT_DEVOPS_TOKENS = frozenset({"ci", "deploy", "workflow", "infra", "infrastructure", "kubernetes", "helm"})
 _AGENT_KEYWORDS: tuple[tuple[str, str], ...] = (
     ("design-agent", "design"),
     ("design-agent", "ux"),
@@ -185,7 +190,15 @@ def _derive_scope(latest_request: str) -> list[str]:
 def _infer_owner_agents(latest_request: str) -> list[str]:
     tokens = _request_tokens(latest_request)
     owners: list[str] = []
+    docker_is_frontend_packaging = (
+        "docker" in tokens
+        and bool(_FRONTEND_TOKENS & tokens)
+        and not bool(_BACKEND_RUNTIME_TOKENS & tokens)
+        and not bool(_EXPLICIT_DEVOPS_TOKENS & tokens)
+    )
     for owner_agent, keyword in _AGENT_KEYWORDS:
+        if owner_agent == "devops-agent" and keyword == "docker" and docker_is_frontend_packaging:
+            continue
         if keyword in tokens and owner_agent not in owners:
             owners.append(owner_agent)
     if not owners and latest_request:

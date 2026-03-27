@@ -243,9 +243,9 @@ class DeerFlowClient:
             checkpointer = get_checkpointer()
 
         if runtime_name == _PROJECT_RUNTIME_NAME:
-            from deerflow.project_runtime.graph import make_project_team_agent
+            from deerflow.project_runtime.graph import compile_project_team_agent
 
-            self._agent = make_project_team_agent(checkpointer=checkpointer)
+            self._agent = compile_project_team_agent(checkpointer=checkpointer)
             self._agent_config_key = key
             logger.info("Agent created: runtime=%s, model=%s", runtime_name, model_name)
             return

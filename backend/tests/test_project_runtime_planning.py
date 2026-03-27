@@ -6,6 +6,7 @@ from deerflow.project_runtime import (
     Phase,
     build_discovery_result,
     build_planning_result,
+    compile_project_team_agent,
     make_project_team_agent,
     synthesize_project_brief,
     synthesize_work_orders,
@@ -60,6 +61,33 @@ def test_planning_matches_multiple_owners_for_tokenized_request():
         "integration-agent",
         "backend-agent",
     ]
+
+
+def test_planning_keeps_frontend_only_docker_requests_scoped_to_frontend_agent():
+    work_orders = synthesize_work_orders(
+        {
+            "messages": [
+                HumanMessage(
+                    content=(
+                        "write a env file generator with web ui. it is deployed by docker. frontend is on web. "
+                        "user can toggle the variables on and off, and fill in key value of variables. once done, "
+                        "user click download and a .env file is generated and downloaded to user. default template "
+                        "is for deer-flow env."
+                    )
+                )
+            ]
+        }
+    )
+
+    assert [work_order.owner_agent for work_order in work_orders] == ["frontend-agent"]
+
+
+def test_planning_still_assigns_devops_for_backend_docker_requests():
+    work_orders = synthesize_work_orders(
+        {"messages": [HumanMessage(content="Implement backend API deployed by docker")]}
+    )
+
+    assert [work_order.owner_agent for work_order in work_orders] == ["devops-agent", "backend-agent"]
 
 
 def test_discovery_scope_does_not_treat_build_as_ui():
@@ -253,7 +281,7 @@ def test_build_planning_result_replans_failed_qa_work_orders_and_clears_stale_st
 
 
 def test_graph_reaches_awaiting_approval_with_validated_plan():
-    graph = make_project_team_agent(checkpointer=InMemorySaver())
+    graph = compile_project_team_agent(checkpointer=InMemorySaver())
     config = {"configurable": {"thread_id": "planning-thread"}, "recursion_limit": 20}
 
     result = graph.invoke({"messages": [HumanMessage(content="Implement backend runtime approval flow")]}, config=config)

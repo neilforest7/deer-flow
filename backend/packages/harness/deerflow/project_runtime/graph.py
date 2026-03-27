@@ -1,10 +1,12 @@
 from collections.abc import Mapping
 from typing import Literal
 
+from langchain_core.runnables import RunnableConfig
 from langgraph.config import get_config
 from langgraph.graph import END, START, StateGraph
 from langgraph.runtime import Runtime
 from langgraph.types import Command
+from langgraph_sdk.runtime import ServerRuntime
 
 from deerflow.project_runtime.approval import resolve_approval_update
 from deerflow.project_runtime.delivery import build_delivery_summary
@@ -249,7 +251,7 @@ def _normalize_factory_checkpointer(checkpointer):
     return checkpointer
 
 
-def make_project_team_agent(config=None, checkpointer=None):
+def compile_project_team_agent(*, checkpointer=None):
     graph = StateGraph(ProjectThreadState)
     graph.add_node("intake", intake_node)
     graph.add_node("discovery", discovery_node)
@@ -281,3 +283,8 @@ def make_project_team_agent(config=None, checkpointer=None):
     graph.add_edge("done", END)
 
     return graph.compile(checkpointer=_normalize_factory_checkpointer(checkpointer))
+
+
+def make_project_team_agent(config: RunnableConfig | None = None, runtime: ServerRuntime = None):
+    del config, runtime
+    return compile_project_team_agent()

@@ -26,7 +26,7 @@ def test_project_stream_targets_project_team_agent_runtime():
     graph = MagicMock()
     graph.stream.return_value = iter([{"messages": [], "phase": "planning", "artifacts": []}])
 
-    with patch("deerflow.project_runtime.graph.make_project_team_agent", return_value=graph):
+    with patch("deerflow.project_runtime.graph.compile_project_team_agent", return_value=graph):
         events = list(client.project_stream("hi", thread_id="thread-1"))
 
     assert events[-1].type == "end"
@@ -67,7 +67,7 @@ def test_project_stream_surfaces_project_runtime_values_and_synthesizes_ai_text(
         ]
     )
 
-    with patch("deerflow.project_runtime.graph.make_project_team_agent", return_value=graph):
+    with patch("deerflow.project_runtime.graph.compile_project_team_agent", return_value=graph):
         events = list(client.project_stream("ship it", thread_id="thread-1"))
 
     values_event = next(event for event in events if event.type == "values")
@@ -94,7 +94,7 @@ def test_project_chat_returns_synthesized_delivery_summary_when_runtime_emits_no
         ]
     )
 
-    with patch("deerflow.project_runtime.graph.make_project_team_agent", return_value=graph):
+    with patch("deerflow.project_runtime.graph.compile_project_team_agent", return_value=graph):
         result = client.project_chat("ship it", thread_id="thread-1")
 
     assert "\"delivery_summary\"" in result
@@ -121,7 +121,7 @@ def test_ensure_agent_builds_project_team_runtime_without_touching_lead_agent_fa
     graph = MagicMock()
 
     with (
-        patch("deerflow.project_runtime.graph.make_project_team_agent", return_value=graph) as mock_make_project,
+        patch("deerflow.project_runtime.graph.compile_project_team_agent", return_value=graph) as mock_make_project,
         patch("deerflow.client.create_agent") as mock_create_agent,
     ):
         client._ensure_agent(config)

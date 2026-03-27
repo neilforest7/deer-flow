@@ -10,7 +10,7 @@ from .dispatcher import (
     select_runnable_work_orders,
 )
 from .delivery import build_delivery_summary
-from .graph import make_project_team_agent
+from .graph import compile_project_team_agent, make_project_team_agent
 from .observability import build_qa_metadata, build_runtime_metadata, build_specialist_metadata, project_runtime_version, resolve_trace_id
 from .planning import (
     build_discovery_result,
@@ -64,6 +64,7 @@ __all__ = [
     "build_qa_metadata",
     "build_runtime_metadata",
     "build_specialist_metadata",
+    "compile_project_team_agent",
     "build_discovery_result",
     "build_planning_result",
     "build_specialist_task_input",

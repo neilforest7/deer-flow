@@ -1,11 +1,11 @@
 from langgraph.checkpoint.memory import InMemorySaver
 
 from deerflow.project_runtime import Phase, PlanStatus
-from deerflow.project_runtime.graph import make_project_team_agent
+from deerflow.project_runtime.graph import compile_project_team_agent
 
 
 def test_build_recovery_resumes_from_checkpoint_without_repeating_completed_work(monkeypatch):
-    graph = make_project_team_agent(checkpointer=InMemorySaver())
+    graph = compile_project_team_agent(checkpointer=InMemorySaver())
     config = {"configurable": {"thread_id": "recovery-build-thread"}, "recursion_limit": 20}
     graph.invoke({"messages": []}, config=config)
 
@@ -90,7 +90,7 @@ def test_build_recovery_resumes_from_checkpoint_without_repeating_completed_work
 
 
 def test_delivery_recovery_rebuilds_summary_idempotently():
-    graph = make_project_team_agent(checkpointer=InMemorySaver())
+    graph = compile_project_team_agent(checkpointer=InMemorySaver())
     config = {"configurable": {"thread_id": "recovery-delivery-thread"}, "recursion_limit": 20}
 
     graph.invoke(

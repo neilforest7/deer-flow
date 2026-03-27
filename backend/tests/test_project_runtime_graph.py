@@ -5,9 +5,11 @@ from pathlib import Path
 import pytest
 from langgraph.checkpoint.memory import InMemorySaver
 from langgraph.graph import END, START, StateGraph
+from langgraph_sdk.runtime import ServerRuntime
 
 from deerflow.project_runtime import Phase, PlanStatus, ProjectThreadState
 from deerflow.project_runtime.graph import (
+    compile_project_team_agent,
     make_project_team_agent,
     resolve_approval_transition,
     resolve_qa_transition,
@@ -23,13 +25,15 @@ def test_project_team_agent_compiles_with_project_thread_state():
 
 
 def test_project_team_agent_factory_signature_stays_langgraph_compatible():
-    parameters = tuple(inspect.signature(make_project_team_agent).parameters)
+    signature = inspect.signature(make_project_team_agent)
+    parameters = tuple(signature.parameters)
 
-    assert parameters == ("config", "checkpointer")
+    assert parameters == ("config", "runtime")
+    assert signature.parameters["runtime"].annotation is ServerRuntime
 
 
-def test_project_team_agent_ignores_server_checkpointer_config_dict():
-    graph = make_project_team_agent(checkpointer={"path": "fake.module:make_checkpointer"})
+def test_compile_project_team_agent_ignores_server_checkpointer_config_dict():
+    graph = compile_project_team_agent(checkpointer={"path": "fake.module:make_checkpointer"})
 
     assert graph.builder.state_schema is ProjectThreadState
 
@@ -95,7 +99,7 @@ def test_qa_gate_transition_respects_qa_result():
 
 
 def test_initial_run_pauses_at_awaiting_approval_without_recursing():
-    graph = make_project_team_agent(checkpointer=InMemorySaver())
+    graph = compile_project_team_agent(checkpointer=InMemorySaver())
     config = {"configurable": {"thread_id": "approval-thread"}, "recursion_limit": 20}
 
     result = graph.invoke({"messages": []}, config=config)
@@ -108,7 +112,7 @@ def test_initial_run_pauses_at_awaiting_approval_without_recursing():
 
 
 def test_approved_run_materializes_build_before_pausing_at_qa_gate_when_qa_blocks():
-    graph = make_project_team_agent(checkpointer=InMemorySaver())
+    graph = compile_project_team_agent(checkpointer=InMemorySaver())
     config = {"configurable": {"thread_id": "build-thread", "model_name": "project-model"}, "recursion_limit": 20}
     graph.invoke({"messages": []}, config=config)
     seen_thread_ids: list[str] = []
@@ -165,7 +169,7 @@ def test_approved_run_materializes_build_before_pausing_at_qa_gate_when_qa_block
 
 
 def test_qa_pass_materializes_delivery_before_done():
-    graph = make_project_team_agent(checkpointer=InMemorySaver())
+    graph = compile_project_team_agent(checkpointer=InMemorySaver())
     config = {"configurable": {"thread_id": "delivery-thread", "model_name": "delivery-model"}, "recursion_limit": 20}
     graph.invoke({"messages": []}, config=config)
 
@@ -216,7 +220,7 @@ def test_qa_pass_materializes_delivery_before_done():
 
 
 def test_build_failure_is_checkpointed_without_reusing_default_thread():
-    graph = make_project_team_agent(checkpointer=InMemorySaver())
+    graph = compile_project_team_agent(checkpointer=InMemorySaver())
     config = {"configurable": {"thread_id": "failure-thread"}, "recursion_limit": 20}
     graph.invoke({"messages": []}, config=config)
 
@@ -252,7 +256,7 @@ def test_build_failure_is_checkpointed_without_reusing_default_thread():
 
 
 def test_qa_fail_replans_targeted_work_order_before_returning_to_awaiting_approval():
-    graph = make_project_team_agent(checkpointer=InMemorySaver())
+    graph = compile_project_team_agent(checkpointer=InMemorySaver())
     config = {"configurable": {"thread_id": "replan-thread"}, "recursion_limit": 20}
 
     result = graph.invoke(
@@ -298,7 +302,7 @@ def test_qa_fail_replans_targeted_work_order_before_returning_to_awaiting_approv
 
 
 def test_graph_rejects_invalid_planning_owner_before_awaiting_approval():
-    graph = make_project_team_agent(checkpointer=InMemorySaver())
+    graph = compile_project_team_agent(checkpointer=InMemorySaver())
     config = {"configurable": {"thread_id": "invalid-owner-thread"}, "recursion_limit": 20}
     monkeypatch = pytest.MonkeyPatch()
 

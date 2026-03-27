@@ -144,6 +144,17 @@ Because `StateGraph` itself does not carry `AgentMiddleware` the same way `creat
 - phase-local executors and specialists receive the active `thread_id`
 - specialist runs use the same thread workspace and sandbox conventions as existing runtime behavior
 
+### 6. Observability Boundary
+
+`project_team_agent` must reuse the existing DeerFlow LangSmith tracing substrate when tracing is enabled through environment configuration.
+
+Observability rules:
+
+- tracing remains optional and environment-controlled
+- enabling or disabling tracing must not change runtime semantics
+- missing LangSmith configuration must only disable trace export, not runtime execution
+- team-runtime-specific trace semantics must stay local to `project_team_agent` and must not alter default `lead_agent` behavior
+
 ## State And Persistence
 
 ### 1. Durable State Authority
@@ -242,6 +253,57 @@ Rules:
 - `ProjectBrief`, `WorkOrder`, QA findings, and specialist reports must never be written into long-term memory
 - durable team state exists only in `ProjectThreadState`
 
+## Observability And Traceability
+
+M1 must emit LangSmith traces for project-runtime model calls whenever DeerFlow tracing is enabled.
+
+### 1. Top-Level Runtime Trace Metadata
+
+Top-level `project_team_agent` runs must attach metadata that allows filtering and diagnosis across multi-turn execution:
+
+- `runtime=project_team`
+- `thread_id`
+- `phase`
+- `plan_status`
+- `project_runtime_version`
+
+### 2. Specialist And QA Trace Metadata
+
+Each specialist and QA execution must attach metadata that allows execution-level diagnosis:
+
+- `runtime=project_team`
+- `thread_id`
+- `phase`
+- `work_order_id`
+- `owner_agent`
+- `execution_kind`
+
+`execution_kind` must distinguish at least:
+
+- `build_specialist`
+- `qa_check`
+
+### 3. Trace Context Propagation
+
+M1 must propagate a single parent `trace_id` from the top-level project runtime into all specialist and QA subagent executions.
+
+This trace context is required so that:
+
+- one project-runtime execution can be correlated across planning, build, QA, and delivery
+- specialist runs can be grouped by work order
+- QA checks can be correlated to the work order and report they validate
+
+### 4. Persistence And Isolation
+
+Trace metadata is observability data, not durable project state.
+
+Rules:
+
+- trace export must not introduce a second durable authority
+- trace payloads do not need to be persisted inside `ProjectThreadState`
+- `ProjectBrief`, `WorkOrder`, QA findings, and delivery summaries must not be copied into long-term memory for observability purposes
+- observability integration must not require gateway or frontend changes for M1
+
 ## Runtime Behavior And Public Interfaces
 
 ### 1. Public Entry Points
@@ -272,7 +334,18 @@ M1 must not add:
 
 Thread lifecycle remains the existing DeerFlow thread lifecycle.
 
-### 2. Specialist Roster
+### 2. Runtime Trace Integration
+
+Project runtime execution must attach runtime metadata before planner, build, QA, and delivery model invocations.
+
+Implementation rules:
+
+- the project runtime graph attaches top-level runtime metadata
+- the structured dispatcher propagates active trace context into specialist execution
+- QA acceptance checks propagate the same trace context model as build-phase specialist execution
+- trace tagging must distinguish planning, specialist execution, QA gate, and delivery summary generation
+
+### 3. Specialist Roster
 
 M1 includes a fixed delivery team roster:
 
@@ -302,7 +375,7 @@ Phase mapping:
 
 The project runtime owns a local specialist registry. It must not modify the core built-in subagent registry.
 
-### 3. Approval UX
+### 4. Approval UX
 
 M1 uses in-conversation approval.
 
@@ -323,7 +396,7 @@ Default policy is conservative:
 - no explicit approval
 - no build
 
-### 4. ACP Policy
+### 5. ACP Policy
 
 ACP remains a core capability, not a team-runtime subsystem.
 

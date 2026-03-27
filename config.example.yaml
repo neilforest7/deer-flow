@@ -403,6 +403,8 @@ project_runtime:
   acp_allowed_specialists: []
   # Optional default model override for project runtime calls.
   default_model_name: null
+  # Allow deterministic fallback when a phase specialist fails or returns invalid JSON.
+  allow_deterministic_phase_fallback: true
 
 # ============================================================================
 # ACP Agents Configuration

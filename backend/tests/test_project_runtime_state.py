@@ -18,6 +18,8 @@ def test_project_thread_state_defaults_are_stable():
         "delivery_summary": None,
         "project_runtime_version": "m1",
         "trace_id": None,
+        "phase_artifacts": {},
+        "phase_attempts": {},
     }
 
 
@@ -30,6 +32,8 @@ def test_project_thread_state_accepts_minimal_state_shape():
     assert state["phase"] == Phase.INTAKE.value
     assert state["work_orders"] == []
     assert state["trace_id"] is None
+    assert state["phase_artifacts"] == {}
+    assert state["phase_attempts"] == {}
 
 
 def test_project_thread_state_defaults_are_not_shared():
@@ -37,8 +41,12 @@ def test_project_thread_state_defaults_are_not_shared():
     second = make_project_thread_state_defaults()
 
     first["work_orders"].append("mutated")
+    first["phase_artifacts"]["planning"] = {"mode": "specialist"}
+    first["phase_attempts"]["planning"] = 1
 
     assert second["work_orders"] == []
+    assert second["phase_artifacts"] == {}
+    assert second["phase_attempts"] == {}
 
 
 def test_project_thread_state_inherits_artifact_reducer_behavior():

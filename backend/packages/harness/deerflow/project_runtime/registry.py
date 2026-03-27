@@ -118,6 +118,13 @@ _TOOL_POLICIES: dict[str, frozenset[str]] = {
     "bash": frozenset({"bash", "ls", "read_file", "write_file", "str_replace"}),
 }
 
+_PHASE_TOOL_POLICIES: dict[tuple[str, Phase], frozenset[str]] = {
+    (
+        "design-agent",
+        Phase.DISCOVERY,
+    ): frozenset({"ls", "read_file", "web_search", "web_fetch", "image_search", "view_image", "tool_search"}),
+}
+
 _TASK_TOOL_NAME = "task"
 _ACP_TOOL_NAME = "invoke_acp_agent"
 
@@ -151,9 +158,10 @@ def tool_names_for_specialist(
     specialist_name: str,
     available_tools: list[_NamedTool],
     *,
+    phase: Phase | None = None,
     acp_enabled: bool = False,
 ) -> tuple[str, ...]:
-    allowed = _TOOL_POLICIES[specialist_name]
+    allowed = _PHASE_TOOL_POLICIES.get((specialist_name, phase), _TOOL_POLICIES[specialist_name])
     resolved: list[str] = []
 
     for tool in available_tools:

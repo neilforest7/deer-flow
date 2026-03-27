@@ -1,14 +1,22 @@
 from __future__ import annotations
 
+import json
 import re
 from collections.abc import Mapping
+from dataclasses import replace
 from typing import Any
 
 from langchain_core.messages import BaseMessage, HumanMessage
 
 from deerflow.project_runtime.prompts import build_discovery_prompt, build_planning_prompt
-from deerflow.project_runtime.registry import get_default_phase_owners
+from deerflow.project_runtime.registry import (
+    get_default_phase_owners,
+    get_specialist_config,
+    specialist_uses_acp_by_default,
+    tool_names_for_specialist,
+)
 from deerflow.project_runtime.types import Phase, PlanStatus, PlanningOutput, ProjectBrief, WorkOrder, WorkOrderStatus
+from deerflow.tools import get_available_tools
 
 _DEFAULT_CONSTRAINTS = [
     "Keep lead_agent behavior unchanged",
@@ -69,6 +77,21 @@ _ACCEPTANCE_CHECK_BY_AGENT = {
     "backend-agent": "PYTHONPATH=. uv run pytest tests/test_project_runtime_graph.py -q",
 }
 _QA_REWORK_PREFIX = "QA rework:"
+
+
+def _deterministic_phase_fallback_allowed() -> bool:
+    try:
+        from deerflow.config import get_app_config
+
+        return bool(getattr(get_app_config().project_runtime, "allow_deterministic_phase_fallback", True))
+    except FileNotFoundError:
+        return True
+
+
+def _default_executor_cls():
+    from deerflow.subagents.executor import SubagentExecutor
+
+    return SubagentExecutor
 
 
 def _allowed_build_owner_agents() -> tuple[str, ...]:
@@ -154,6 +177,26 @@ def _request_tokens(text: str) -> set[str]:
     return set(re.findall(r"[a-z0-9]+", text.lower()))
 
 
+def _extract_json_payload(text: str) -> dict[str, Any]:
+    stripped = text.strip()
+    if not stripped:
+        raise ValueError("Empty specialist result")
+
+    fenced_match = re.search(r"```(?:json)?\s*(\{.*\})\s*```", stripped, re.DOTALL)
+    if fenced_match:
+        stripped = fenced_match.group(1)
+    else:
+        start = stripped.find("{")
+        end = stripped.rfind("}")
+        if start >= 0 and end > start:
+            stripped = stripped[start : end + 1]
+
+    payload = json.loads(stripped)
+    if not isinstance(payload, dict):
+        raise ValueError("Specialist result must decode to a JSON object")
+    return payload
+
+
 def synthesize_project_brief(state: Mapping[str, Any]) -> ProjectBrief:
     latest_request = get_latest_user_message_text(state)
     prompt = build_discovery_prompt(
@@ -171,6 +214,35 @@ def synthesize_project_brief(state: Mapping[str, Any]) -> ProjectBrief:
         "success_criteria": list(_DEFAULT_SUCCESS_CRITERIA),
     }
     return validate_project_brief(brief_payload)
+
+
+def _merge_project_briefs(
+    briefs: list[ProjectBrief],
+    *,
+    existing_brief: ProjectBrief | None = None,
+) -> ProjectBrief:
+    seed = existing_brief or (briefs[0] if briefs else None)
+    if seed is None:
+        raise ValueError("At least one project brief is required")
+
+    def _merge_list(attribute: str) -> list[str]:
+        merged: list[str] = []
+        for brief in ([seed] if existing_brief is not None else []):
+            merged.extend(getattr(brief, attribute))
+        for brief in briefs:
+            merged.extend(getattr(brief, attribute))
+        return list(dict.fromkeys(item for item in merged if item))
+
+    objective = next((brief.objective for brief in briefs if brief.objective.strip()), seed.objective)
+    return validate_project_brief(
+        {
+            "objective": objective,
+            "scope": _merge_list("scope"),
+            "constraints": _merge_list("constraints"),
+            "deliverables": _merge_list("deliverables"),
+            "success_criteria": _merge_list("success_criteria"),
+        }
+    )
 
 
 def _derive_scope(latest_request: str) -> list[str]:
@@ -240,6 +312,117 @@ def synthesize_work_orders(
         )
 
     return work_orders
+
+
+def _discovery_specialists_for_request(latest_request: str) -> list[str]:
+    specialists = ["discovery-agent", "architect-agent"]
+    if {"frontend", "ui", "design", "ux"} & _request_tokens(latest_request):
+        specialists.append("design-agent")
+    return specialists
+
+
+def _execute_specialist_json(
+    specialist_name: str,
+    task: str,
+    *,
+    phase: Phase,
+    state: Mapping[str, Any],
+    thread_id: str | None,
+    parent_model: str | None = None,
+    available_tools: list[Any] | None = None,
+    executor_cls=None,
+) -> dict[str, Any]:
+    specialist_config = get_specialist_config(specialist_name)
+    if specialist_config is None:
+        raise ValueError(f"Unknown specialist: {specialist_name}")
+
+    if available_tools is None:
+        available_tools = get_available_tools(subagent_enabled=False)
+    if executor_cls is None:
+        executor_cls = _default_executor_cls()
+
+    acp_enabled = any(getattr(tool, "name", None) == "invoke_acp_agent" for tool in available_tools)
+    filtered_tool_names = tool_names_for_specialist(
+        specialist_name,
+        available_tools,
+        phase=phase,
+        acp_enabled=acp_enabled and specialist_uses_acp_by_default(specialist_name),
+    )
+    scoped_config = replace(specialist_config, tools=list(filtered_tool_names))
+    executor = executor_cls(
+        config=scoped_config,
+        tools=available_tools,
+        parent_model=parent_model,
+        sandbox_state=state.get("sandbox"),
+        thread_data=state.get("thread_data"),
+        thread_id=thread_id,
+    )
+    result = executor.execute(task)
+    status = str(getattr(result, "status", "") or "").lower()
+    if status != "completed":
+        raise RuntimeError(getattr(result, "error", None) or f"{specialist_name} execution finished with status {status or 'unknown'}")
+    return _extract_json_payload(str(getattr(result, "result", "") or ""))
+
+
+def execute_discovery_phase(
+    state: Mapping[str, Any],
+    *,
+    thread_id: str | None,
+    parent_model: str | None = None,
+    available_tools: list[Any] | None = None,
+    executor_cls=None,
+) -> tuple[ProjectBrief, list[str], bool]:
+    latest_request = get_latest_user_message_text(state)
+    existing_brief_payload = state.get("project_brief") if isinstance(state.get("project_brief"), Mapping) else None
+    prompt = build_discovery_prompt(latest_user_request=latest_request, existing_brief=existing_brief_payload)
+    existing_brief = validate_project_brief(existing_brief_payload) if existing_brief_payload else None
+
+    specialist_names = _discovery_specialists_for_request(latest_request)
+    briefs: list[ProjectBrief] = []
+    executed: list[str] = []
+    for specialist_name in specialist_names:
+        payload = _execute_specialist_json(
+            specialist_name,
+            prompt,
+            phase=Phase.DISCOVERY,
+            state=state,
+            thread_id=thread_id,
+            parent_model=parent_model,
+            available_tools=available_tools,
+            executor_cls=executor_cls,
+        )
+        briefs.append(validate_project_brief(payload))
+        executed.append(specialist_name)
+
+    return _merge_project_briefs(briefs, existing_brief=existing_brief), executed, True
+
+
+def execute_planning_phase(
+    state: Mapping[str, Any],
+    *,
+    thread_id: str | None,
+    parent_model: str | None = None,
+    available_tools: list[Any] | None = None,
+    executor_cls=None,
+) -> PlanningOutput:
+    project_brief = validate_project_brief(state.get("project_brief") or synthesize_project_brief(state))
+    latest_request = get_latest_user_message_text(state)
+    prompt = build_planning_prompt(
+        project_brief=project_brief.model_dump(mode="json"),
+        latest_user_request=latest_request,
+        allowed_owner_agents=_allowed_build_owner_agents(),
+    )
+    payload = _execute_specialist_json(
+        "planner-agent",
+        prompt,
+        phase=Phase.PLANNING,
+        state=state,
+        thread_id=thread_id,
+        parent_model=parent_model,
+        available_tools=available_tools,
+        executor_cls=executor_cls,
+    )
+    return validate_planning_output(payload)
 
 
 def _normalize_work_order(value: WorkOrder | Mapping[str, Any]) -> WorkOrder:
@@ -357,25 +540,76 @@ def _replan_from_qa_failure(
 
 
 def build_discovery_result(state: Mapping[str, Any]) -> dict[str, Any]:
-    project_brief = synthesize_project_brief(state)
+    phase_artifacts = dict(state.get("phase_artifacts") or {})
+    phase_attempts = dict(state.get("phase_attempts") or {})
+    try:
+        project_brief, executed, _ = execute_discovery_phase(state, thread_id=None)
+        phase_artifacts["discovery"] = {
+            "mode": "specialist",
+            "specialists": executed,
+            "project_brief": project_brief.model_dump(mode="json"),
+        }
+    except Exception:
+        if not _deterministic_phase_fallback_allowed():
+            raise
+        project_brief = synthesize_project_brief(state)
+        phase_artifacts["discovery"] = {
+            "mode": "deterministic",
+            "project_brief": project_brief.model_dump(mode="json"),
+        }
+    phase_attempts["discovery"] = int(phase_attempts.get("discovery", 0)) + 1
     return {
         "phase": "discovery",
         "project_brief": project_brief.model_dump(mode="json"),
+        "phase_artifacts": phase_artifacts,
+        "phase_attempts": phase_attempts,
     }
 
 
 def build_planning_result(state: Mapping[str, Any]) -> dict[str, Any]:
     project_brief = validate_project_brief(state.get("project_brief") or synthesize_project_brief(state))
     replanned_work_orders = _replan_from_qa_failure(state, project_brief=project_brief)
-    planning_output = validate_planning_output(
-        {
-            "project_brief": project_brief.model_dump(mode="json"),
-            "work_orders": [
-                work_order.model_dump(mode="json")
-                for work_order in (replanned_work_orders or synthesize_work_orders(state, project_brief=project_brief))
-            ],
+    phase_artifacts = dict(state.get("phase_artifacts") or {})
+    phase_attempts = dict(state.get("phase_attempts") or {})
+    planning_output: PlanningOutput
+    used_specialist = False
+    if replanned_work_orders:
+        planning_output = validate_planning_output(
+            {
+                "project_brief": project_brief.model_dump(mode="json"),
+                "work_orders": [work_order.model_dump(mode="json") for work_order in replanned_work_orders],
+            }
+        )
+        phase_artifacts["planning"] = {
+            "mode": "qa-replan",
+            "work_orders": [work_order.model_dump(mode="json") for work_order in planning_output.work_orders],
         }
-    )
+    else:
+        try:
+            planning_output = execute_planning_phase(state, thread_id=None)
+            used_specialist = True
+            phase_artifacts["planning"] = {
+                "mode": "specialist",
+                "work_orders": [work_order.model_dump(mode="json") for work_order in planning_output.work_orders],
+            }
+        except Exception:
+            if not _deterministic_phase_fallback_allowed():
+                raise
+            planning_output = validate_planning_output(
+                {
+                    "project_brief": project_brief.model_dump(mode="json"),
+                    "work_orders": [
+                        work_order.model_dump(mode="json")
+                        for work_order in synthesize_work_orders(state, project_brief=project_brief)
+                    ],
+                }
+            )
+        if not used_specialist:
+            phase_artifacts["planning"] = {
+                "mode": "deterministic",
+                "work_orders": [work_order.model_dump(mode="json") for work_order in planning_output.work_orders],
+            }
+    phase_attempts["planning"] = int(phase_attempts.get("planning", 0)) + 1
     return {
         "phase": "planning",
         "project_brief": planning_output.project_brief.model_dump(mode="json"),
@@ -385,23 +619,119 @@ def build_planning_result(state: Mapping[str, Any]) -> dict[str, Any]:
         "build_error": None,
         "qa_gate": None,
         "delivery_summary": None,
+        "phase_artifacts": phase_artifacts,
+        "phase_attempts": phase_attempts,
     }
 
 
-def run_discovery(state: Mapping[str, Any]) -> dict[str, Any]:
-    return build_discovery_result(state)
+def run_discovery(
+    state: Mapping[str, Any],
+    *,
+    thread_id: str | None = None,
+    parent_model: str | None = None,
+    available_tools: list[Any] | None = None,
+    executor_cls=None,
+) -> dict[str, Any]:
+    phase_artifacts = dict(state.get("phase_artifacts") or {})
+    phase_attempts = dict(state.get("phase_attempts") or {})
+    try:
+        project_brief, executed, _ = execute_discovery_phase(
+            state,
+            thread_id=thread_id,
+            parent_model=parent_model,
+            available_tools=available_tools,
+            executor_cls=executor_cls,
+        )
+        phase_artifacts["discovery"] = {
+            "mode": "specialist",
+            "specialists": executed,
+            "project_brief": project_brief.model_dump(mode="json"),
+        }
+    except Exception:
+        if not _deterministic_phase_fallback_allowed():
+            raise
+        project_brief = synthesize_project_brief(state)
+        phase_artifacts["discovery"] = {
+            "mode": "deterministic",
+            "project_brief": project_brief.model_dump(mode="json"),
+        }
+
+    phase_attempts["discovery"] = int(phase_attempts.get("discovery", 0)) + 1
+    return {
+        "phase": "discovery",
+        "project_brief": project_brief.model_dump(mode="json"),
+        "phase_artifacts": phase_artifacts,
+        "phase_attempts": phase_attempts,
+    }
 
 
-def run_planning(state: Mapping[str, Any]) -> dict[str, Any]:
-    return build_planning_result(state)
+def run_planning(
+    state: Mapping[str, Any],
+    *,
+    thread_id: str | None = None,
+    parent_model: str | None = None,
+    available_tools: list[Any] | None = None,
+    executor_cls=None,
+) -> dict[str, Any]:
+    project_brief = validate_project_brief(state.get("project_brief") or synthesize_project_brief(state))
+    replanned_work_orders = _replan_from_qa_failure(state, project_brief=project_brief)
+    phase_artifacts = dict(state.get("phase_artifacts") or {})
+    phase_attempts = dict(state.get("phase_attempts") or {})
 
+    if replanned_work_orders is not None:
+        planning_output = validate_planning_output(
+            {
+                "project_brief": project_brief.model_dump(mode="json"),
+                "work_orders": [work_order.model_dump(mode="json") for work_order in replanned_work_orders],
+            }
+        )
+        phase_artifacts["planning"] = {
+            "mode": "qa-replan",
+            "work_orders": [work_order.model_dump(mode="json") for work_order in planning_output.work_orders],
+        }
+    else:
+        try:
+            planning_output = execute_planning_phase(
+                state,
+                thread_id=thread_id,
+                parent_model=parent_model,
+                available_tools=available_tools,
+                executor_cls=executor_cls,
+            )
+            phase_artifacts["planning"] = {
+                "mode": "specialist",
+                "work_orders": [work_order.model_dump(mode="json") for work_order in planning_output.work_orders],
+            }
+        except Exception:
+            if not _deterministic_phase_fallback_allowed():
+                raise
+            planning_output = validate_planning_output(
+                {
+                    "project_brief": project_brief.model_dump(mode="json"),
+                    "work_orders": [
+                        work_order.model_dump(mode="json")
+                        for work_order in synthesize_work_orders(state, project_brief=project_brief)
+                    ],
+                }
+            )
+            phase_artifacts["planning"] = {
+                "mode": "deterministic",
+                "work_orders": [work_order.model_dump(mode="json") for work_order in planning_output.work_orders],
+            }
 
-def run_discovery(state: Mapping[str, Any]) -> dict[str, Any]:
-    return build_discovery_result(state)
-
-
-def run_planning(state: Mapping[str, Any]) -> dict[str, Any]:
-    return build_planning_result(state)
+    phase_attempts["planning"] = int(phase_attempts.get("planning", 0)) + 1
+    return {
+        "phase": "planning",
+        "project_brief": planning_output.project_brief.model_dump(mode="json"),
+        "work_orders": [work_order.model_dump(mode="json") for work_order in planning_output.work_orders],
+        "plan_status": PlanStatus.AWAITING_APPROVAL.value,
+        "active_work_order_ids": [],
+        "build_error": None,
+        "qa_gate": None,
+        "delivery_summary": None,
+        "phase_artifacts": phase_artifacts,
+        "phase_attempts": phase_attempts,
+    }
 
 
 def synthesize_planning_output(

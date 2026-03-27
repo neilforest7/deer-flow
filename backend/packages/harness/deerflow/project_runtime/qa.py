@@ -8,7 +8,7 @@ from typing import Any
 
 from deerflow.project_runtime.observability import build_qa_metadata, resolve_trace_id
 from deerflow.project_runtime.registry import get_specialist_config, specialist_uses_acp_by_default, tool_names_for_specialist
-from deerflow.project_runtime.types import AgentReport, ProjectBrief, QAGate, QAGateResult, WorkOrder, WorkOrderStatus
+from deerflow.project_runtime.types import AgentReport, Phase, ProjectBrief, QAGate, QAGateResult, WorkOrder, WorkOrderStatus
 from deerflow.tools import get_available_tools
 
 _EXECUTABLE_COMMANDS = {"pytest", "uv", "python", "make", "npm", "pnpm", "yarn", "ruff", "mypy", "bash", "sh"}
@@ -146,6 +146,7 @@ def run_acceptance_check(
     filtered_tool_names = tool_names_for_specialist(
         "qa-agent",
         available_tools,
+        phase=Phase.QA_GATE,
         acp_enabled=acp_enabled and specialist_uses_acp_by_default("qa-agent"),
     )
     scoped_config = replace(specialist_config, tools=list(filtered_tool_names))

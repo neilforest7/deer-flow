@@ -89,6 +89,43 @@ def test_delivery_agent_can_present_files_without_acp():
     )
 
 
+def test_design_agent_is_read_only_during_discovery():
+    available_tools = [
+        SimpleNamespace(name="read_file"),
+        SimpleNamespace(name="write_file"),
+        SimpleNamespace(name="str_replace"),
+        SimpleNamespace(name="web_search"),
+        SimpleNamespace(name="image_search"),
+        SimpleNamespace(name="view_image"),
+        SimpleNamespace(name="tool_search"),
+        SimpleNamespace(name="task"),
+    ]
+
+    assert tool_names_for_specialist("design-agent", available_tools, phase=Phase.DISCOVERY) == (
+        "read_file",
+        "web_search",
+        "image_search",
+        "view_image",
+        "tool_search",
+    )
+
+
+def test_design_agent_retains_write_tools_during_build():
+    available_tools = [
+        SimpleNamespace(name="read_file"),
+        SimpleNamespace(name="write_file"),
+        SimpleNamespace(name="str_replace"),
+        SimpleNamespace(name="web_search"),
+    ]
+
+    assert tool_names_for_specialist("design-agent", available_tools, phase=Phase.BUILD) == (
+        "read_file",
+        "write_file",
+        "str_replace",
+        "web_search",
+    )
+
+
 def test_specialist_config_is_resolved_deterministically():
     config = get_specialist_config("backend-agent")
 

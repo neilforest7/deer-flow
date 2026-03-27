@@ -96,6 +96,20 @@ These constraints are non-negotiable. Any implementation that violates them is o
 - No project-specific client wrappers
 - No tests for approval gating, schema validation, QA rework loops, or checkpointer recovery for team runtime
 
+### 4.2a What Is Already Landed In The Repository Now
+
+- `project_runtime` package exists
+- `ProjectThreadState`, specialist registry, graph topology, approval gate, build dispatcher, QA gate, and project client wrappers exist
+- build specialists already dispatch through `SubagentExecutor`
+- executable QA checks already dispatch through `qa-agent`
+
+### 4.2b Remaining Gap After The First Landing
+
+- `discovery`, `planning`, and `delivery` still needed real phase-specialist execution
+- phase outputs still needed canonical JSON parsing plus validation before state mutation
+- runtime still needed an explicit compatibility rule for deterministic fallback
+- docs still overstated specialist readiness by treating registry presence as execution readiness
+
 ### 4.3 Immediate Design Implication
 
 M1 should be implemented as a parallel runtime path that reuses execution substrate but owns its own state, graph, registry, prompts, policies, and tests.
@@ -242,6 +256,8 @@ Recommended field additions beyond the PRD minimum:
 - `agent_reports`
 - `qa_gate`
 - `delivery_summary`
+- `phase_artifacts`
+- `phase_attempts`
 
 Recommended additional fields for implementation clarity:
 
@@ -282,6 +298,8 @@ Output:
 
 - canonical `ProjectBrief`
 - discovery-phase `AgentReport` entries if specialists were used
+- `phase_artifacts.discovery`
+- incremented `phase_attempts.discovery`
 
 ### `planning`
 
@@ -296,6 +314,8 @@ Output:
 - validated `work_orders`
 - `plan_status="awaiting_approval"`
 - `phase="awaiting_approval"`
+- `phase_artifacts.planning`
+- incremented `phase_attempts.planning`
 
 ### `awaiting_approval`
 
@@ -350,6 +370,8 @@ Output:
 
 - `delivery_summary`
 - `phase="done"`
+- `phase_artifacts.delivery`
+- incremented `phase_attempts.delivery`
 
 ## 6.5 Specialist Registry And Policy
 
@@ -411,6 +433,12 @@ Add a runtime-local tool assembly helper that:
 - can include `present_files` only where it is useful
 
 This should be a wrapper over existing tool assembly, not a fork of the core tool system.
+
+Compatibility rule:
+
+- `discovery`, `planning`, and `delivery` execute specialists first
+- if specialist execution fails and `allow_deterministic_phase_fallback=true`, runtime falls back to deterministic synthesis
+- if specialist execution fails and fallback is disabled, the phase fails fast
 
 ## 7. TDD Strategy
 

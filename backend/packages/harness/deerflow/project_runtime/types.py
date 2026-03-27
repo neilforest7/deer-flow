@@ -82,3 +82,16 @@ class QAGate(BaseModel):
 class PlanningOutput(BaseModel):
     project_brief: ProjectBrief
     work_orders: list[WorkOrder]
+
+
+class DeliveryCompletedWork(BaseModel):
+    work_order_id: str
+    title: str
+    summary: str
+
+
+class DeliverySummary(BaseModel):
+    completed_work: list[DeliveryCompletedWork] = Field(default_factory=list)
+    artifacts: list[str] = Field(default_factory=list)
+    verification: list[str] = Field(default_factory=list)
+    follow_ups: list[str] = Field(default_factory=list)

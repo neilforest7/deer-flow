@@ -9,7 +9,7 @@ from langgraph.types import Command
 from langgraph_sdk.runtime import ServerRuntime
 
 from deerflow.project_runtime.approval import resolve_approval_update
-from deerflow.project_runtime.delivery import build_delivery_summary
+from deerflow.project_runtime.delivery import run_delivery
 from deerflow.project_runtime.dispatcher import dispatch_build_phase
 from deerflow.project_runtime.observability import project_runtime_version, resolve_trace_id
 from deerflow.project_runtime.planning import run_discovery, run_planning
@@ -39,14 +39,22 @@ def intake_node(state: ProjectThreadState, runtime: Runtime | None = None) -> di
 
 
 def discovery_node(state: ProjectThreadState, runtime: Runtime | None = None) -> dict:
-    result = run_discovery(state)
+    result = run_discovery(
+        state,
+        thread_id=_resolve_thread_id(runtime),
+        parent_model=_resolve_model_name(runtime),
+    )
     result["trace_id"] = resolve_trace_id(state, runtime=runtime)
     result["project_runtime_version"] = project_runtime_version()
     return result
 
 
 def planning_node(state: ProjectThreadState, runtime: Runtime | None = None) -> dict:
-    result = run_planning(state)
+    result = run_planning(
+        state,
+        thread_id=_resolve_thread_id(runtime),
+        parent_model=_resolve_model_name(runtime),
+    )
     result["trace_id"] = resolve_trace_id(state, runtime=runtime)
     result["project_runtime_version"] = project_runtime_version()
     return result
@@ -181,12 +189,14 @@ def qa_gate_node(state: ProjectThreadState, runtime: Runtime | None = None) -> d
 
 
 def delivery_node(state: ProjectThreadState, runtime: Runtime | None = None) -> dict:
-    return {
-        "phase": Phase.DELIVERY.value,
-        "delivery_summary": build_delivery_summary(state),
-        "trace_id": resolve_trace_id(state, runtime=runtime),
-        "project_runtime_version": project_runtime_version(),
-    }
+    result = run_delivery(
+        state,
+        thread_id=_resolve_thread_id(runtime),
+        parent_model=_resolve_model_name(runtime),
+    )
+    result["trace_id"] = resolve_trace_id(state, runtime=runtime)
+    result["project_runtime_version"] = project_runtime_version()
+    return result
 
 
 def done_node(state: ProjectThreadState) -> dict:

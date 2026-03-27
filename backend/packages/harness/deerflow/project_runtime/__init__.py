@@ -1,4 +1,5 @@
 from .approval import parse_approval_intent
+from .delivery import build_delivery_summary, execute_delivery_phase, run_delivery
 from .dispatcher import (
     DispatchBuildOutcome,
     apply_dispatch_update,
@@ -9,12 +10,13 @@ from .dispatcher import (
     dispatch_work_order,
     select_runnable_work_orders,
 )
-from .delivery import build_delivery_summary
 from .graph import compile_project_team_agent, make_project_team_agent
 from .observability import build_qa_metadata, build_runtime_metadata, build_specialist_metadata, project_runtime_version, resolve_trace_id
 from .planning import (
     build_discovery_result,
     build_planning_result,
+    execute_discovery_phase,
+    execute_planning_phase,
     get_latest_user_message_text,
     run_discovery,
     run_planning,
@@ -35,6 +37,8 @@ from .registry import (
 from .state import ProjectThreadState, make_project_thread_state_defaults
 from .types import (
     AgentReport,
+    DeliveryCompletedWork,
+    DeliverySummary,
     Phase,
     PlanningOutput,
     PlanStatus,
@@ -48,6 +52,8 @@ from .types import (
 __all__ = [
     "AgentReport",
     "AcceptanceCheckResult",
+    "DeliveryCompletedWork",
+    "DeliverySummary",
     "DispatchBuildOutcome",
     "Phase",
     "PlanningOutput",
@@ -61,16 +67,19 @@ __all__ = [
     "apply_dispatch_update",
     "build_can_proceed_to_qa",
     "build_delivery_summary",
+    "build_discovery_result",
+    "build_planning_result",
     "build_qa_metadata",
     "build_runtime_metadata",
     "build_specialist_metadata",
-    "compile_project_team_agent",
-    "build_discovery_result",
-    "build_planning_result",
     "build_specialist_task_input",
+    "compile_project_team_agent",
     "dispatch_build_phase",
     "dispatch_build_step",
     "dispatch_work_order",
+    "execute_delivery_phase",
+    "execute_discovery_phase",
+    "execute_planning_phase",
     "get_default_phase_owners",
     "get_latest_user_message_text",
     "get_specialist_config",
@@ -80,9 +89,10 @@ __all__ = [
     "parse_approval_intent",
     "project_runtime_version",
     "resolve_trace_id",
+    "run_acceptance_check",
+    "run_delivery",
     "run_discovery",
     "run_planning",
-    "run_acceptance_check",
     "run_qa_gate",
     "select_runnable_work_orders",
     "specialist_uses_acp_by_default",

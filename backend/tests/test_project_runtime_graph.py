@@ -89,6 +89,8 @@ def test_initial_run_pauses_at_awaiting_approval_without_recursing():
 
     assert result["phase"] == Phase.AWAITING_APPROVAL.value
     assert result["plan_status"] == PlanStatus.AWAITING_APPROVAL.value
+    assert result["project_runtime_version"] == "m1"
+    assert isinstance(result["trace_id"], str)
     assert graph.get_state(config).values["phase"] == Phase.AWAITING_APPROVAL.value
 
 
@@ -100,11 +102,14 @@ def test_approved_run_materializes_build_before_pausing_at_qa_gate_when_qa_block
     seen_models: list[str | None] = []
     call_count = 0
 
-    def fake_dispatch(_state, *, thread_id, parent_model=None, available_tools=None, executor_cls=None):
+    seen_trace_ids: list[str | None] = []
+
+    def fake_dispatch(_state, *, thread_id, parent_model=None, trace_id=None, available_tools=None, executor_cls=None):
         nonlocal call_count
         call_count += 1
         seen_thread_ids.append(thread_id)
         seen_models.append(parent_model)
+        seen_trace_ids.append(trace_id)
         return {
             "phase": Phase.BUILD.value,
             "work_orders": [
@@ -129,7 +134,7 @@ def test_approved_run_materializes_build_before_pausing_at_qa_gate_when_qa_block
     monkeypatch.setattr("deerflow.project_runtime.graph.dispatch_build_phase", fake_dispatch)
     monkeypatch.setattr(
         "deerflow.project_runtime.graph.run_qa_gate",
-        lambda state, *, thread_id, parent_model=None, available_tools=None, executor_cls=None: {
+        lambda state, *, thread_id, parent_model=None, trace_id=None, available_tools=None, executor_cls=None: {
             "result": "blocked",
             "findings": ["Awaiting explicit QA follow-up"],
             "required_rework": [],
@@ -140,6 +145,7 @@ def test_approved_run_materializes_build_before_pausing_at_qa_gate_when_qa_block
 
     assert seen_thread_ids == ["build-thread", "build-thread"]
     assert seen_models == ["project-model", "project-model"]
+    assert seen_trace_ids[0] == seen_trace_ids[1]
     assert sum(1 for chunk in updates if chunk.get("build", {}).get("phase") == Phase.BUILD.value) == 1
     assert graph.get_state(config).values["phase"] == Phase.QA_GATE.value
     assert graph.get_state(config).values["agent_reports"][-1]["work_order_id"] == "wo-backend-implementation"
@@ -150,9 +156,12 @@ def test_qa_pass_materializes_delivery_before_done():
     config = {"configurable": {"thread_id": "delivery-thread", "model_name": "delivery-model"}, "recursion_limit": 20}
     graph.invoke({"messages": []}, config=config)
 
-    def fake_dispatch(_state, *, thread_id, parent_model=None, available_tools=None, executor_cls=None):
+    seen_trace_ids: list[str | None] = []
+
+    def fake_dispatch(_state, *, thread_id, parent_model=None, trace_id=None, available_tools=None, executor_cls=None):
         assert thread_id == "delivery-thread"
         assert parent_model == "delivery-model"
+        seen_trace_ids.append(trace_id)
         return {
             "phase": Phase.BUILD.value,
             "work_orders": [
@@ -177,7 +186,7 @@ def test_qa_pass_materializes_delivery_before_done():
     monkeypatch.setattr("deerflow.project_runtime.graph.dispatch_build_phase", fake_dispatch)
     monkeypatch.setattr(
         "deerflow.project_runtime.graph.run_qa_gate",
-        lambda state, *, thread_id, parent_model=None, available_tools=None, executor_cls=None: {
+        lambda state, *, thread_id, parent_model=None, trace_id=None, available_tools=None, executor_cls=None: {
             "result": "pass",
             "findings": [f"model={parent_model}"],
             "required_rework": [],
@@ -187,6 +196,7 @@ def test_qa_pass_materializes_delivery_before_done():
     monkeypatch.undo()
 
     assert any(chunk.get("delivery", {}).get("phase") == Phase.DELIVERY.value for chunk in updates)
+    assert seen_trace_ids and isinstance(seen_trace_ids[0], str)
     assert "delivery_summary" in graph.get_state(config).values
     assert "model=delivery-model" in graph.get_state(config).values["qa_gate"]["findings"]
     assert graph.get_state(config).values["phase"] == Phase.DONE.value
@@ -197,8 +207,9 @@ def test_build_failure_is_checkpointed_without_reusing_default_thread():
     config = {"configurable": {"thread_id": "failure-thread"}, "recursion_limit": 20}
     graph.invoke({"messages": []}, config=config)
 
-    def fake_dispatch(_state, *, thread_id, parent_model=None, available_tools=None, executor_cls=None):
+    def fake_dispatch(_state, *, thread_id, parent_model=None, trace_id=None, available_tools=None, executor_cls=None):
         assert thread_id == "failure-thread"
+        assert isinstance(trace_id, str)
         return {
             "phase": Phase.BUILD.value,
             "work_orders": [

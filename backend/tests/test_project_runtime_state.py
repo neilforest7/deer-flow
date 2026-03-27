@@ -17,6 +17,7 @@ def test_project_thread_state_defaults_are_stable():
         "qa_gate": None,
         "delivery_summary": None,
         "project_runtime_version": "m1",
+        "trace_id": None,
     }
 
 
@@ -28,6 +29,7 @@ def test_project_thread_state_accepts_minimal_state_shape():
 
     assert state["phase"] == Phase.INTAKE.value
     assert state["work_orders"] == []
+    assert state["trace_id"] is None
 
 
 def test_project_thread_state_defaults_are_not_shared():

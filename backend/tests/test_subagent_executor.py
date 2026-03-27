@@ -213,6 +213,45 @@ class TestAsyncExecutionPath:
         assert result.completed_at is not None
 
     @pytest.mark.anyio
+    async def test_aexecute_passes_trace_metadata_into_run_config(self, classes, base_config, msg):
+        """Test that trace metadata is forwarded to the subagent run config."""
+        SubagentExecutor = classes["SubagentExecutor"]
+
+        final_state = {
+            "messages": [
+                msg.human("Do something"),
+                msg.ai("Task completed successfully", "msg-1"),
+            ]
+        }
+        captured: dict[str, object] = {}
+
+        async def mock_astream(*args, **kwargs):
+            captured["config"] = kwargs["config"]
+            captured["context"] = kwargs["context"]
+            yield final_state
+
+        mock_agent = MagicMock()
+        mock_agent.astream = mock_astream
+
+        executor = SubagentExecutor(
+            config=base_config,
+            tools=[],
+            thread_id="test-thread",
+            trace_id="test-trace",
+            run_metadata={"runtime": "project_team", "phase": "build", "execution_kind": "build_specialist"},
+        )
+
+        with patch.object(executor, "_create_agent", return_value=mock_agent):
+            await executor._aexecute("Do something")
+
+        run_config = captured["config"]
+        assert run_config["configurable"]["thread_id"] == "test-thread"
+        assert run_config["metadata"]["trace_id"] == "test-trace"
+        assert run_config["metadata"]["runtime"] == "project_team"
+        assert run_config["metadata"]["phase"] == "build"
+        assert run_config["metadata"]["execution_kind"] == "build_specialist"
+
+    @pytest.mark.anyio
     async def test_aexecute_collects_ai_messages(self, classes, base_config, mock_agent, msg):
         """Test that AI messages are collected during streaming."""
         SubagentExecutor = classes["SubagentExecutor"]

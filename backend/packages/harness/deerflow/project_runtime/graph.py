@@ -8,6 +8,7 @@ from langgraph.types import Command
 from deerflow.project_runtime.approval import resolve_approval_update
 from deerflow.project_runtime.delivery import build_delivery_summary
 from deerflow.project_runtime.dispatcher import dispatch_build_phase
+from deerflow.project_runtime.observability import project_runtime_version, resolve_trace_id
 from deerflow.project_runtime.planning import run_discovery, run_planning
 from deerflow.project_runtime.qa import run_qa_gate
 from deerflow.project_runtime.state import ProjectThreadState, make_project_thread_state_defaults
@@ -25,19 +26,27 @@ GraphNode = Literal[
 ]
 
 
-def intake_node(state: ProjectThreadState) -> dict:
+def intake_node(state: ProjectThreadState, runtime: Runtime | None = None) -> dict:
     defaults = make_project_thread_state_defaults()
     defaults["phase"] = Phase.INTAKE.value
     defaults["messages"] = state.get("messages", [])
+    defaults["project_runtime_version"] = project_runtime_version()
+    defaults["trace_id"] = resolve_trace_id(state, runtime=runtime)
     return defaults
 
 
-def discovery_node(state: ProjectThreadState) -> dict:
-    return run_discovery(state)
+def discovery_node(state: ProjectThreadState, runtime: Runtime | None = None) -> dict:
+    result = run_discovery(state)
+    result["trace_id"] = resolve_trace_id(state, runtime=runtime)
+    result["project_runtime_version"] = project_runtime_version()
+    return result
 
 
-def planning_node(state: ProjectThreadState) -> dict:
-    return run_planning(state)
+def planning_node(state: ProjectThreadState, runtime: Runtime | None = None) -> dict:
+    result = run_planning(state)
+    result["trace_id"] = resolve_trace_id(state, runtime=runtime)
+    result["project_runtime_version"] = project_runtime_version()
+    return result
 
 
 def awaiting_approval_node(state: ProjectThreadState) -> dict | Command:
@@ -47,14 +56,40 @@ def awaiting_approval_node(state: ProjectThreadState) -> dict | Command:
             update={
                 "phase": Phase.AWAITING_APPROVAL.value,
                 "plan_status": PlanStatus.AWAITING_APPROVAL.value,
+                "trace_id": state.get("trace_id"),
+                "project_runtime_version": project_runtime_version(),
             },
             goto=END,
         )
     if transition["goto"] == "build":
-        return Command(update={"phase": Phase.BUILD.value, "plan_status": PlanStatus.APPROVED.value}, goto="build")
+        return Command(
+            update={
+                "phase": Phase.BUILD.value,
+                "plan_status": PlanStatus.APPROVED.value,
+                "trace_id": state.get("trace_id"),
+                "project_runtime_version": project_runtime_version(),
+            },
+            goto="build",
+        )
     if transition["goto"] == "planning":
-        return Command(update={"phase": Phase.PLANNING.value, "plan_status": PlanStatus.NEEDS_REVISION.value}, goto="planning")
-    return Command(update={"phase": Phase.DONE.value, "plan_status": transition["plan_status"]}, goto="done")
+        return Command(
+            update={
+                "phase": Phase.PLANNING.value,
+                "plan_status": PlanStatus.NEEDS_REVISION.value,
+                "trace_id": state.get("trace_id"),
+                "project_runtime_version": project_runtime_version(),
+            },
+            goto="planning",
+        )
+    return Command(
+        update={
+            "phase": Phase.DONE.value,
+            "plan_status": transition["plan_status"],
+            "trace_id": state.get("trace_id"),
+            "project_runtime_version": project_runtime_version(),
+        },
+        goto="done",
+    )
 
 
 def _resolve_thread_id(runtime: Runtime | None = None) -> str:
@@ -87,40 +122,76 @@ def _resolve_model_name(runtime: Runtime | None = None) -> str | None:
 
 
 def build_node(state: ProjectThreadState, runtime: Runtime | None = None) -> dict | Command:
+    trace_id = resolve_trace_id(state, runtime=runtime)
     transition = dispatch_build_phase(
         state,
         thread_id=_resolve_thread_id(runtime),
         parent_model=_resolve_model_name(runtime),
+        trace_id=trace_id,
     )
     goto = transition.pop("goto", "qa_gate")
     if goto == "qa_gate":
         transition.pop("phase", None)
+    transition["trace_id"] = trace_id
+    transition["project_runtime_version"] = project_runtime_version()
     return Command(update=transition, goto=goto)
 
 
 def qa_gate_node(state: ProjectThreadState, runtime: Runtime | None = None) -> dict | Command:
+    trace_id = resolve_trace_id(state, runtime=runtime)
     qa_gate = run_qa_gate(
         state,
         thread_id=_resolve_thread_id(runtime),
         parent_model=_resolve_model_name(runtime),
+        trace_id=trace_id,
     )
     transition = resolve_qa_transition({"qa_gate": qa_gate})
     if transition == END:
-        return Command(update={"phase": Phase.QA_GATE.value, "qa_gate": qa_gate}, goto=END)
+        return Command(
+            update={
+                "phase": Phase.QA_GATE.value,
+                "qa_gate": qa_gate,
+                "trace_id": trace_id,
+                "project_runtime_version": project_runtime_version(),
+            },
+            goto=END,
+        )
     if transition == "delivery":
-        return Command(update={"phase": Phase.DELIVERY.value, "qa_gate": qa_gate}, goto="delivery")
-    return Command(update={"phase": Phase.PLANNING.value, "qa_gate": qa_gate}, goto="planning")
+        return Command(
+            update={
+                "phase": Phase.DELIVERY.value,
+                "qa_gate": qa_gate,
+                "trace_id": trace_id,
+                "project_runtime_version": project_runtime_version(),
+            },
+            goto="delivery",
+        )
+    return Command(
+        update={
+            "phase": Phase.PLANNING.value,
+            "qa_gate": qa_gate,
+            "trace_id": trace_id,
+            "project_runtime_version": project_runtime_version(),
+        },
+        goto="planning",
+    )
 
 
-def delivery_node(state: ProjectThreadState) -> dict:
+def delivery_node(state: ProjectThreadState, runtime: Runtime | None = None) -> dict:
     return {
         "phase": Phase.DELIVERY.value,
         "delivery_summary": build_delivery_summary(state),
+        "trace_id": resolve_trace_id(state, runtime=runtime),
+        "project_runtime_version": project_runtime_version(),
     }
 
 
 def done_node(state: ProjectThreadState) -> dict:
-    return {"phase": Phase.DONE.value}
+    return {
+        "phase": Phase.DONE.value,
+        "trace_id": state.get("trace_id"),
+        "project_runtime_version": project_runtime_version(),
+    }
 
 
 def route_from_phase(state: ProjectThreadState) -> GraphNode:

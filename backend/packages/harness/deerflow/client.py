@@ -200,10 +200,20 @@ class DeerFlowClient:
         }
         if runtime_name is not None:
             configurable["runtime_name"] = runtime_name
-        return RunnableConfig(
+        run_config = RunnableConfig(
             configurable=configurable,
             recursion_limit=overrides.get("recursion_limit", 100),
         )
+        if runtime_name == _PROJECT_RUNTIME_NAME:
+            from deerflow.project_runtime.observability import build_runtime_metadata, resolve_trace_id
+
+            run_config["metadata"] = build_runtime_metadata(
+                thread_id=thread_id,
+                phase="intake",
+                plan_status="draft",
+                trace_id=resolve_trace_id(),
+            )
+        return run_config
 
     def _ensure_agent(self, config: RunnableConfig):
         """Create (or recreate) the agent when config-dependent params change."""

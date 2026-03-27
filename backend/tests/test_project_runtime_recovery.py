@@ -11,7 +11,7 @@ def test_build_recovery_resumes_from_checkpoint_without_repeating_completed_work
 
     call_count = 0
 
-    def fake_dispatch(state, *, thread_id, parent_model=None, available_tools=None, executor_cls=None):
+    def fake_dispatch(state, *, thread_id, parent_model=None, trace_id=None, available_tools=None, executor_cls=None):
         nonlocal call_count
         call_count += 1
         if call_count == 1:
@@ -75,7 +75,7 @@ def test_build_recovery_resumes_from_checkpoint_without_repeating_completed_work
     monkeypatch.setattr("deerflow.project_runtime.graph.dispatch_build_phase", fake_dispatch)
     monkeypatch.setattr(
         "deerflow.project_runtime.graph.run_qa_gate",
-        lambda state, *, thread_id, parent_model=None, available_tools=None, executor_cls=None: {
+        lambda state, *, thread_id, parent_model=None, trace_id=None, available_tools=None, executor_cls=None: {
             "result": "blocked",
             "findings": ["awaiting resume"],
             "required_rework": [],

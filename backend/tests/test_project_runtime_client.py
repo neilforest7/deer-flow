@@ -32,6 +32,10 @@ def test_project_stream_targets_project_team_agent_runtime():
     assert events[-1].type == "end"
     config = graph.stream.call_args.kwargs["config"]
     assert config["configurable"]["runtime_name"] == "project_team_agent"
+    assert config["metadata"]["runtime"] == "project_team"
+    assert config["metadata"]["phase"] == "intake"
+    assert config["metadata"]["thread_id"] == "thread-1"
+    assert isinstance(config["metadata"]["trace_id"], str)
 
 
 def test_project_chat_targets_project_team_agent_runtime():
@@ -106,6 +110,7 @@ def test_project_runtime_uses_default_model_override_when_no_model_is_provided()
     runnable_config = client._get_runnable_config("thread-1", runtime_name="project_team_agent")
 
     assert runnable_config["configurable"]["model_name"] == "qa-model"
+    assert runnable_config["metadata"]["runtime"] == "project_team"
 
 
 def test_ensure_agent_builds_project_team_runtime_without_touching_lead_agent_factory():

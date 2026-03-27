@@ -6,6 +6,7 @@ from collections.abc import Mapping
 from dataclasses import dataclass, replace
 from typing import Any
 
+from deerflow.project_runtime.observability import build_qa_metadata, resolve_trace_id
 from deerflow.project_runtime.registry import get_specialist_config, specialist_uses_acp_by_default, tool_names_for_specialist
 from deerflow.project_runtime.types import AgentReport, ProjectBrief, QAGate, QAGateResult, WorkOrder, WorkOrderStatus
 from deerflow.tools import get_available_tools
@@ -116,10 +117,12 @@ def run_acceptance_check(
     *,
     thread_id: str | None,
     parent_model: str | None = None,
+    trace_id: str | None = None,
     available_tools: list[Any] | None = None,
     executor_cls=None,
 ) -> AcceptanceCheckResult:
     normalized_work_order = _normalize_work_order(work_order)
+    active_trace_id = trace_id or resolve_trace_id(state)
     stripped = check.strip()
 
     if not _is_executable_check(stripped):
@@ -153,6 +156,13 @@ def run_acceptance_check(
         sandbox_state=state.get("sandbox"),
         thread_data=state.get("thread_data"),
         thread_id=thread_id,
+        trace_id=active_trace_id,
+        run_metadata=build_qa_metadata(
+            thread_id=thread_id,
+            plan_status=state.get("plan_status") if isinstance(state.get("plan_status"), str) else None,
+            trace_id=active_trace_id,
+            work_order_id=normalized_work_order.id,
+        ),
     )
     result = executor.execute(
         _build_acceptance_check_task(
@@ -191,9 +201,11 @@ def run_qa_gate(
     *,
     thread_id: str | None,
     parent_model: str | None = None,
+    trace_id: str | None = None,
     available_tools: list[Any] | None = None,
     executor_cls=None,
 ) -> dict[str, Any]:
+    active_trace_id = trace_id or resolve_trace_id(state)
     work_orders = [_normalize_work_order(item) for item in state.get("work_orders") or []]
     reports = [_normalize_report(item) for item in state.get("agent_reports") or []]
     report_ids = {report.work_order_id for report in reports}
@@ -245,6 +257,7 @@ def run_qa_gate(
                 check,
                 thread_id=thread_id,
                 parent_model=parent_model,
+                trace_id=active_trace_id,
                 available_tools=available_tools,
                 executor_cls=executor_cls,
             )

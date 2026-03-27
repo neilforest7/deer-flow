@@ -4,6 +4,7 @@ from collections.abc import Mapping
 from dataclasses import dataclass, replace
 from typing import Any, Literal
 
+from deerflow.project_runtime.observability import build_specialist_metadata, resolve_trace_id
 from deerflow.project_runtime.registry import get_specialist_config, specialist_uses_acp_by_default, tool_names_for_specialist
 from deerflow.project_runtime.state import merge_active_work_order_ids, merge_work_orders
 from deerflow.project_runtime.types import AgentReport, ProjectBrief, WorkOrder, WorkOrderStatus
@@ -131,10 +132,12 @@ def dispatch_work_order(
     *,
     thread_id: str | None,
     parent_model: str | None = None,
+    trace_id: str | None = None,
     available_tools: list[Any] | None = None,
     executor_cls=None,
 ) -> AgentReport:
     normalized_work_order = _normalize_work_order(work_order)
+    active_trace_id = trace_id or resolve_trace_id(state)
     specialist_config = get_specialist_config(normalized_work_order.owner_agent)
     if specialist_config is None:
         raise ValueError(f"Unknown specialist owner_agent: {normalized_work_order.owner_agent}")
@@ -158,6 +161,14 @@ def dispatch_work_order(
         sandbox_state=state.get("sandbox"),
         thread_data=state.get("thread_data"),
         thread_id=thread_id,
+        trace_id=active_trace_id,
+        run_metadata=build_specialist_metadata(
+            thread_id=thread_id,
+            plan_status=state.get("plan_status") if isinstance(state.get("plan_status"), str) else None,
+            trace_id=active_trace_id,
+            work_order_id=normalized_work_order.id,
+            owner_agent=normalized_work_order.owner_agent,
+        ),
     )
     result = executor.execute(
         build_specialist_task_input(
@@ -185,9 +196,11 @@ def dispatch_build_step(
     *,
     thread_id: str | None,
     parent_model: str | None = None,
+    trace_id: str | None = None,
     available_tools: list[Any] | None = None,
     executor_cls=None,
 ) -> DispatchBuildOutcome:
+    active_trace_id = trace_id or resolve_trace_id(state)
     runnable = select_runnable_work_orders(state)
     if not runnable:
         raise ValueError("No runnable work orders are available for dispatch")
@@ -203,6 +216,7 @@ def dispatch_build_step(
             next_work_order,
             thread_id=thread_id,
             parent_model=parent_model,
+            trace_id=active_trace_id,
             available_tools=available_tools,
             executor_cls=executor_cls,
         )
@@ -221,6 +235,7 @@ def dispatch_build_step(
             update={
                 "work_orders": failed_work_orders,
                 "active_work_order_ids": [work_order_id for work_order_id in initial_active_ids if work_order_id != next_work_order.id],
+                "trace_id": active_trace_id,
             },
         )
 
@@ -236,6 +251,7 @@ def dispatch_build_step(
             "work_orders": completed_work_orders,
             "active_work_order_ids": [work_order_id for work_order_id in initial_active_ids if work_order_id != next_work_order.id],
             "agent_reports": [report.model_dump(mode="json")],
+            "trace_id": active_trace_id,
         },
     )
 
@@ -248,6 +264,8 @@ def apply_dispatch_update(state: Mapping[str, Any], update: Mapping[str, Any]) -
         update.get("active_work_order_ids"),
     )
     next_state["agent_reports"] = [*list(state.get("agent_reports") or []), *list(update.get("agent_reports") or [])]
+    if "trace_id" in update:
+        next_state["trace_id"] = update.get("trace_id")
     return next_state
 
 
@@ -260,10 +278,12 @@ def dispatch_build_phase(
     state: Mapping[str, Any],
     *,
     thread_id: str | None,
+    trace_id: str | None = None,
     available_tools: list[Any] | None = None,
     executor_cls=None,
     parent_model: str | None = None,  # kept for compatibility with graph tests and future callers
 ) -> dict[str, Any]:
+    active_trace_id = trace_id or resolve_trace_id(state)
     runnable = select_runnable_work_orders(state)
     if not runnable:
         if build_can_proceed_to_qa(state):
@@ -276,6 +296,7 @@ def dispatch_build_phase(
                 "active_work_order_ids": list(state.get("active_work_order_ids") or []),
                 "agent_reports": list(state.get("agent_reports") or []),
                 "build_error": None,
+                "trace_id": active_trace_id,
                 "goto": "qa_gate",
             }
         unresolved = [
@@ -289,6 +310,7 @@ def dispatch_build_phase(
         state,
         thread_id=thread_id,
         parent_model=parent_model,
+        trace_id=active_trace_id,
         available_tools=available_tools,
         executor_cls=executor_cls,
     )
@@ -303,6 +325,7 @@ def dispatch_build_phase(
             "active_work_order_ids": list(next_state.get("active_work_order_ids") or []),
             "agent_reports": list(next_state.get("agent_reports") or []),
             "build_error": outcome.error or f"Failed to dispatch {outcome.work_order_id}",
+            "trace_id": active_trace_id,
             "goto": "__end__",
         }
 
@@ -315,5 +338,6 @@ def dispatch_build_phase(
         "active_work_order_ids": list(next_state.get("active_work_order_ids") or []),
         "agent_reports": list(next_state.get("agent_reports") or []),
         "build_error": None,
+        "trace_id": active_trace_id,
         "goto": "qa_gate" if build_can_proceed_to_qa(next_state) else "build",
     }

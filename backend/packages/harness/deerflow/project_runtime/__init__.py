@@ -11,6 +11,7 @@ from .dispatcher import (
 )
 from .delivery import build_delivery_summary
 from .graph import make_project_team_agent
+from .observability import build_qa_metadata, build_runtime_metadata, build_specialist_metadata, project_runtime_version, resolve_trace_id
 from .planning import (
     build_discovery_result,
     build_planning_result,
@@ -60,6 +61,9 @@ __all__ = [
     "apply_dispatch_update",
     "build_can_proceed_to_qa",
     "build_delivery_summary",
+    "build_qa_metadata",
+    "build_runtime_metadata",
+    "build_specialist_metadata",
     "build_discovery_result",
     "build_planning_result",
     "build_specialist_task_input",
@@ -73,6 +77,8 @@ __all__ = [
     "make_project_team_agent",
     "make_project_thread_state_defaults",
     "parse_approval_intent",
+    "project_runtime_version",
+    "resolve_trace_id",
     "run_discovery",
     "run_planning",
     "run_acceptance_check",

@@ -132,6 +132,7 @@ class SubagentExecutor:
         thread_data: ThreadDataState | None = None,
         thread_id: str | None = None,
         trace_id: str | None = None,
+        run_metadata: dict[str, Any] | None = None,
     ):
         """Initialize the executor.
 
@@ -151,6 +152,7 @@ class SubagentExecutor:
         self.thread_id = thread_id
         # Generate trace_id if not provided (for top-level calls)
         self.trace_id = trace_id or str(uuid.uuid4())[:8]
+        self.run_metadata = dict(run_metadata or {})
 
         # Filter tools based on config
         self.tools = _filter_tools(
@@ -230,6 +232,10 @@ class SubagentExecutor:
             # Build config with thread_id for sandbox access and recursion limit
             run_config: RunnableConfig = {
                 "recursion_limit": self.config.max_turns,
+                "metadata": {
+                    **self.run_metadata,
+                    "trace_id": self.trace_id,
+                },
             }
             context = {}
             if self.thread_id:

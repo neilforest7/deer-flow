@@ -52,7 +52,7 @@ def test_run_qa_gate_returns_blocked_when_build_error_exists():
 
 def test_run_qa_gate_returns_fail_with_actionable_rework_for_failed_check():
     class FailingExecutor:
-        def __init__(self, config, tools, parent_model=None, sandbox_state=None, thread_data=None, thread_id=None):
+        def __init__(self, config, tools, parent_model=None, sandbox_state=None, thread_data=None, thread_id=None, trace_id=None, run_metadata=None):
             pass
 
         def execute(self, task):
@@ -72,7 +72,7 @@ def test_run_qa_gate_returns_fail_with_actionable_rework_for_failed_check():
 
 def test_run_qa_gate_fails_when_completed_subagent_reports_fail_verdict():
     class VerdictFailExecutor:
-        def __init__(self, config, tools, parent_model=None, sandbox_state=None, thread_data=None, thread_id=None):
+        def __init__(self, config, tools, parent_model=None, sandbox_state=None, thread_data=None, thread_id=None, trace_id=None, run_metadata=None):
             pass
 
         def execute(self, task):
@@ -91,7 +91,7 @@ def test_run_qa_gate_fails_when_completed_subagent_reports_fail_verdict():
 
 def test_run_qa_gate_fails_when_completed_subagent_omits_verdict():
     class MissingVerdictExecutor:
-        def __init__(self, config, tools, parent_model=None, sandbox_state=None, thread_data=None, thread_id=None):
+        def __init__(self, config, tools, parent_model=None, sandbox_state=None, thread_data=None, thread_id=None, trace_id=None, run_metadata=None):
             pass
 
         def execute(self, task):
@@ -110,7 +110,7 @@ def test_run_qa_gate_fails_when_completed_subagent_omits_verdict():
 
 def test_run_qa_gate_returns_pass_and_records_manual_findings_for_non_executable_checks():
     class PassingExecutor:
-        def __init__(self, config, tools, parent_model=None, sandbox_state=None, thread_data=None, thread_id=None):
+        def __init__(self, config, tools, parent_model=None, sandbox_state=None, thread_data=None, thread_id=None, trace_id=None, run_metadata=None):
             pass
 
         def execute(self, task):
@@ -133,8 +133,20 @@ def test_run_acceptance_check_executes_env_prefixed_commands():
     captured = {}
 
     class CapturingExecutor:
-        def __init__(self, config, tools, parent_model=None, sandbox_state=None, thread_data=None, thread_id=None):
+        def __init__(
+            self,
+            config,
+            tools,
+            parent_model=None,
+            sandbox_state=None,
+            thread_data=None,
+            thread_id=None,
+            trace_id=None,
+            run_metadata=None,
+        ):
             captured["parent_model"] = parent_model
+            captured["trace_id"] = trace_id
+            captured["run_metadata"] = run_metadata
 
         def execute(self, task):
             captured["task"] = task
@@ -146,6 +158,7 @@ def test_run_acceptance_check_executes_env_prefixed_commands():
         "PYTHONPATH=. uv run pytest tests/test_project_runtime_graph.py -q",
         thread_id="thread-1",
         parent_model="project-model",
+        trace_id="trace-qa-1",
         available_tools=[SimpleNamespace(name="bash"), SimpleNamespace(name="read_file")],
         executor_cls=CapturingExecutor,
     )
@@ -154,6 +167,13 @@ def test_run_acceptance_check_executes_env_prefixed_commands():
     assert result.passed is True
     assert "PYTHONPATH=. uv run pytest" in captured["task"]
     assert captured["parent_model"] == "project-model"
+    assert captured["trace_id"] == "trace-qa-1"
+    assert captured["run_metadata"]["runtime"] == "project_team"
+    assert captured["run_metadata"]["phase"] == "qa_gate"
+    assert captured["run_metadata"]["execution_kind"] == "qa_check"
+    assert captured["run_metadata"]["work_order_id"] == "wo-1"
+    assert captured["run_metadata"]["owner_agent"] == "qa-agent"
+    assert captured["run_metadata"]["trace_id"] == "trace-qa-1"
 
 
 def test_run_qa_gate_fails_when_completed_work_order_has_no_report():
@@ -189,7 +209,7 @@ def test_run_acceptance_check_uses_latest_report_for_reworked_work_order():
     captured = {}
 
     class CapturingExecutor:
-        def __init__(self, config, tools, parent_model=None, sandbox_state=None, thread_data=None, thread_id=None):
+        def __init__(self, config, tools, parent_model=None, sandbox_state=None, thread_data=None, thread_id=None, trace_id=None, run_metadata=None):
             pass
 
         def execute(self, task):

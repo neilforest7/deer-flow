@@ -149,7 +149,7 @@ def get_langsmith_config() -> LangSmithConfigResponse:
     description="List recent LangSmith runs, with optional filtering by trace ID, thread ID, or custom trace metadata.",
 )
 def list_langsmith_runs(
-    limit: int = Query(default=20, ge=1, le=200),
+    limit: int = Query(default=20, ge=1, le=100),
     project_name: str | None = Query(default=None, description="Override the default LangSmith project."),
     trace_id: str | None = Query(default=None, description="Filter by LangSmith trace ID."),
     thread_id: str | None = Query(default=None, description="Filter by DeerFlow thread_id stored in metadata."),
@@ -163,9 +163,10 @@ def list_langsmith_runs(
     project = project_name or config.project
     client = _build_langsmith_client(config)
 
-    fetch_limit = limit
+    fetch_limit = min(limit, 100)
     if thread_id is not None or custom_trace_id is not None:
-        fetch_limit = min(max(limit * 10, 100), 500)
+        # LangSmith currently rejects list_runs limits above 100.
+        fetch_limit = 100
 
     try:
         runs = list(

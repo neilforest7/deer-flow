@@ -142,7 +142,7 @@ def test_list_langsmith_runs_filters_by_thread_metadata(monkeypatch):
     monkeypatch.setattr(observability, "_build_langsmith_client", lambda _config: fake_client)
 
     with _make_client() as client:
-        response = client.get("/api/observability/langsmith/runs?root_only=true&thread_id=thread-b&limit=5")
+        response = client.get("/api/observability/langsmith/runs?root_only=true&thread_id=thread-b&limit=20")
 
     assert response.status_code == 200
     body = response.json()

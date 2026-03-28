@@ -6,7 +6,10 @@ from deerflow.project_runtime.types import Phase
 from deerflow.subagents.builtins import BASH_AGENT_CONFIG, GENERAL_PURPOSE_CONFIG
 from deerflow.subagents.config import SubagentConfig
 
-_PROJECT_RUNTIME_SPECIALIST_MAX_TURNS = 100
+# Build specialists often need several tool turns for install/build/verify loops.
+# Keep enough headroom to finish scoped work without hitting LangGraph recursion
+# limits during normal frontend or devops tasks.
+_PROJECT_RUNTIME_SPECIALIST_MAX_TURNS = 200
 
 
 class _NamedTool(Protocol):
@@ -26,7 +29,10 @@ def _make_specialist(
         system_prompt=(
             f"You are {name}. Execute only the scoped work assigned by the project runtime.\n"
             "Do not broaden scope beyond the current work order.\n"
-            "When the requested implementation or verification is complete, stop immediately and return a concise final summary.\n"
+            "Operate only within the scoped workspace and the read/write boundaries provided in the task.\n"
+            "Do not rerun commands that already succeeded unless the relevant inputs changed.\n"
+            "Do not install packages or run shell commands outside the scoped repository/workspace.\n"
+            "When the requested implementation is complete, run only the minimum relevant verification, then stop immediately and return a concise final summary.\n"
             "Do not keep exploring once the scoped work is satisfied."
         ),
         tools=tools,

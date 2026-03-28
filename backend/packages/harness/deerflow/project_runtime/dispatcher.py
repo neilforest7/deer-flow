@@ -114,7 +114,18 @@ def build_specialist_task_input(
 
     lines = [
         "You are executing a scoped project-runtime work order.",
+        "Stay inside the existing repository and thread workspace for all file and shell operations.",
+        "Only modify files that fall within the work order write_scope.",
+        "Do not install packages or run shell commands outside the scoped workspace.",
+        "Do not repeat commands that already succeeded unless you changed the relevant inputs.",
+        "Once implementation is complete, run only the minimum relevant acceptance checks, then stop and return a concise final summary.",
         f"Thread ID: {thread_id or 'unknown'}",
+        "Read scope",
+        str(normalized_work_order.read_scope),
+        "Write scope",
+        str(normalized_work_order.write_scope),
+        "Acceptance checks",
+        str(normalized_work_order.acceptance_checks),
         "ProjectBrief",
         str(project_brief.model_dump(mode="json") if project_brief is not None else {}),
         "WorkOrder",

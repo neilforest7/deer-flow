@@ -95,6 +95,9 @@ def test_build_specialist_task_input_contains_brief_work_order_reports_and_threa
     assert "Implement backend runtime approval flow" in task_input
     assert "wo-2" in task_input
     assert "Completed dependency" in task_input
+    assert "Write scope" in task_input
+    assert "frontend" in task_input
+    assert "Do not repeat commands that already succeeded" in task_input
 
 
 def test_dispatch_build_step_completes_work_order_and_appends_report():

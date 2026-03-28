@@ -12,6 +12,7 @@ from app.gateway.routers import (
     mcp,
     memory,
     models,
+    observability,
     skills,
     suggestions,
     threads,
@@ -145,6 +146,10 @@ This gateway provides custom endpoints for models, MCP configuration, skills, an
                 "description": "Manage IM channel integrations (Feishu, Slack, Telegram)",
             },
             {
+                "name": "observability",
+                "description": "Inspect LangSmith tracing configuration, runs, and trace trees",
+            },
+            {
                 "name": "health",
                 "description": "Health check and system status endpoints",
             },
@@ -183,6 +188,9 @@ This gateway provides custom endpoints for models, MCP configuration, skills, an
 
     # Channels API is mounted at /api/channels
     app.include_router(channels.router)
+
+    # LangSmith observability API is mounted at /api/observability/langsmith/*
+    app.include_router(observability.router)
 
     @app.get("/health", tags=["health"])
     async def health_check() -> dict:

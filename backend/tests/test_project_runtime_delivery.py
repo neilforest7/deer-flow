@@ -48,9 +48,24 @@ def test_build_delivery_summary_contains_completed_work_artifacts_verification_a
 
 
 def test_execute_delivery_phase_uses_delivery_agent_output():
+    seen_trace_ids: list[str | None] = []
+    seen_run_metadata: list[dict] = []
+
     class DeliveryExecutor:
-        def __init__(self, config, tools, parent_model=None, sandbox_state=None, thread_data=None, thread_id=None):
+        def __init__(
+            self,
+            config,
+            tools,
+            parent_model=None,
+            sandbox_state=None,
+            thread_data=None,
+            thread_id=None,
+            trace_id=None,
+            run_metadata=None,
+        ):
             self.config = config
+            seen_trace_ids.append(trace_id)
+            seen_run_metadata.append(dict(run_metadata or {}))
 
         def execute(self, task):
             payload = {
@@ -79,19 +94,36 @@ def test_execute_delivery_phase_uses_delivery_agent_output():
             "agent_reports": [{"work_order_id": "wo-1", "agent_name": "backend-agent", "summary": "done"}],
             "qa_gate": {"result": "pass", "findings": [], "required_rework": []},
             "artifacts": [],
+            "plan_status": "approved",
+            "phase_attempts": {"delivery": 1},
         },
         thread_id="thread-1",
+        trace_id="delivery-trace",
         available_tools=[SimpleNamespace(name="read_file"), SimpleNamespace(name="present_files")],
         executor_cls=DeliveryExecutor,
     )
 
     assert summary.completed_work[0].work_order_id == "wo-1"
     assert summary.artifacts == ["artifact.txt"]
+    assert seen_trace_ids == ["delivery-trace"]
+    assert seen_run_metadata[0]["phase"] == "delivery"
+    assert seen_run_metadata[0]["execution_kind"] == "delivery_specialist"
+    assert seen_run_metadata[0]["work_order_id"] == "phase:delivery:delivery-agent:attempt:2"
 
 
 def test_run_delivery_falls_back_to_deterministic_summary(monkeypatch):
     class FailingExecutor:
-        def __init__(self, config, tools, parent_model=None, sandbox_state=None, thread_data=None, thread_id=None):
+        def __init__(
+            self,
+            config,
+            tools,
+            parent_model=None,
+            sandbox_state=None,
+            thread_data=None,
+            thread_id=None,
+            trace_id=None,
+            run_metadata=None,
+        ):
             pass
 
         def execute(self, task):
@@ -129,7 +161,17 @@ def test_run_delivery_falls_back_to_deterministic_summary(monkeypatch):
 
 def test_run_delivery_raises_when_specialist_fails_and_fallback_is_disabled(monkeypatch):
     class FailingExecutor:
-        def __init__(self, config, tools, parent_model=None, sandbox_state=None, thread_data=None, thread_id=None):
+        def __init__(
+            self,
+            config,
+            tools,
+            parent_model=None,
+            sandbox_state=None,
+            thread_data=None,
+            thread_id=None,
+            trace_id=None,
+            run_metadata=None,
+        ):
             pass
 
         def execute(self, task):

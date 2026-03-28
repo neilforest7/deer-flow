@@ -36,6 +36,7 @@ def test_project_stream_targets_project_team_agent_runtime():
     assert config["metadata"]["phase"] == "intake"
     assert config["metadata"]["thread_id"] == "thread-1"
     assert isinstance(config["metadata"]["trace_id"], str)
+    assert graph.stream.call_args.kwargs["context"]["trace_id"] == config["metadata"]["trace_id"]
 
 
 def test_project_chat_targets_project_team_agent_runtime():

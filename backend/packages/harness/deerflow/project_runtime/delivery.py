@@ -4,6 +4,7 @@ from dataclasses import replace
 from collections.abc import Mapping
 from typing import Any
 
+from deerflow.project_runtime.observability import build_delivery_specialist_metadata, resolve_trace_id
 from deerflow.project_runtime.prompts import build_delivery_prompt
 from deerflow.project_runtime.registry import get_specialist_config, specialist_uses_acp_by_default, tool_names_for_specialist
 from deerflow.project_runtime.types import AgentReport, DeliverySummary, Phase, WorkOrder, WorkOrderStatus
@@ -31,6 +32,13 @@ def _default_executor_cls():
     from deerflow.subagents.executor import SubagentExecutor
 
     return SubagentExecutor
+
+
+def _next_phase_attempt(state: Mapping[str, Any], phase: str) -> int:
+    phase_attempts = state.get("phase_attempts") or {}
+    if isinstance(phase_attempts, Mapping):
+        return int(phase_attempts.get(phase, 0)) + 1
+    return 1
 
 
 def build_delivery_summary(state: Mapping[str, Any]) -> DeliverySummary:
@@ -81,6 +89,7 @@ def execute_delivery_phase(
     *,
     thread_id: str | None,
     parent_model: str | None = None,
+    trace_id: str | None = None,
     available_tools: list[Any] | None = None,
     executor_cls=None,
 ) -> DeliverySummary:
@@ -101,6 +110,9 @@ def execute_delivery_phase(
         acp_enabled=acp_enabled and specialist_uses_acp_by_default("delivery-agent"),
     )
     scoped_config = replace(specialist_config, tools=list(filtered_tool_names))
+    active_trace_id = trace_id or resolve_trace_id(state)
+    attempt = _next_phase_attempt(state, Phase.DELIVERY.value)
+    plan_status = state.get("plan_status") if isinstance(state.get("plan_status"), str) else None
     executor = executor_cls(
         config=scoped_config,
         tools=available_tools,
@@ -108,6 +120,13 @@ def execute_delivery_phase(
         sandbox_state=state.get("sandbox"),
         thread_data=state.get("thread_data"),
         thread_id=thread_id,
+        trace_id=active_trace_id,
+        run_metadata=build_delivery_specialist_metadata(
+            thread_id=thread_id,
+            plan_status=plan_status,
+            trace_id=active_trace_id,
+            attempt=attempt,
+        ),
     )
     deterministic_summary = build_delivery_summary(state)
     prompt = build_delivery_prompt(
@@ -136,6 +155,7 @@ def run_delivery(
     *,
     thread_id: str | None = None,
     parent_model: str | None = None,
+    trace_id: str | None = None,
     available_tools: list[Any] | None = None,
     executor_cls=None,
 ) -> dict[str, Any]:
@@ -146,6 +166,7 @@ def run_delivery(
             state,
             thread_id=thread_id,
             parent_model=parent_model,
+            trace_id=trace_id,
             available_tools=available_tools,
             executor_cls=executor_cls,
         )

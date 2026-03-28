@@ -1,12 +1,14 @@
 import inspect
 import json
 from pathlib import Path
+from types import SimpleNamespace
 
 import pytest
 from langgraph.checkpoint.memory import InMemorySaver
 from langgraph.graph import END, START, StateGraph
 from langgraph_sdk.runtime import ServerRuntime
 
+import deerflow.project_runtime.graph as graph_module
 from deerflow.project_runtime import Phase, PlanStatus, ProjectThreadState
 from deerflow.project_runtime.graph import (
     compile_project_team_agent,
@@ -109,6 +111,176 @@ def test_initial_run_pauses_at_awaiting_approval_without_recursing():
     assert result["project_runtime_version"] == "m1"
     assert isinstance(result["trace_id"], str)
     assert graph.get_state(config).values["phase"] == Phase.AWAITING_APPROVAL.value
+
+
+def test_initial_run_persists_config_metadata_trace_id(monkeypatch):
+    graph = compile_project_team_agent(checkpointer=InMemorySaver())
+    config = {
+        "configurable": {"thread_id": "trace-seed-thread"},
+        "metadata": {"trace_id": "seed-trace"},
+        "recursion_limit": 20,
+    }
+    seen_trace_ids: dict[str, str | None] = {}
+
+    def fake_run_discovery(_state, *, thread_id=None, parent_model=None, trace_id=None, available_tools=None, executor_cls=None):
+        seen_trace_ids["discovery"] = trace_id
+        return {
+            "phase": Phase.DISCOVERY.value,
+            "project_brief": {
+                "objective": "Ship runtime",
+                "scope": ["backend runtime"],
+                "constraints": ["keep lead_agent unchanged"],
+                "deliverables": ["runtime"],
+                "success_criteria": ["tests pass"],
+            },
+            "phase_artifacts": {},
+            "phase_attempts": {"discovery": 1},
+        }
+
+    def fake_run_planning(_state, *, thread_id=None, parent_model=None, trace_id=None, available_tools=None, executor_cls=None):
+        seen_trace_ids["planning"] = trace_id
+        return {
+            "phase": Phase.PLANNING.value,
+            "project_brief": {
+                "objective": "Ship runtime",
+                "scope": ["backend runtime"],
+                "constraints": ["keep lead_agent unchanged"],
+                "deliverables": ["runtime"],
+                "success_criteria": ["tests pass"],
+            },
+            "work_orders": [],
+            "plan_status": PlanStatus.AWAITING_APPROVAL.value,
+            "active_work_order_ids": [],
+            "build_error": None,
+            "qa_gate": None,
+            "delivery_summary": None,
+            "phase_artifacts": {},
+            "phase_attempts": {"discovery": 1, "planning": 1},
+        }
+
+    monkeypatch.setattr("deerflow.project_runtime.graph.run_discovery", fake_run_discovery)
+    monkeypatch.setattr("deerflow.project_runtime.graph.run_planning", fake_run_planning)
+
+    result = graph.invoke({"messages": []}, config=config)
+
+    assert seen_trace_ids == {
+        "discovery": "seed-trace",
+        "planning": "seed-trace",
+    }
+    assert result["trace_id"] == "seed-trace"
+    assert graph.get_state(config).values["trace_id"] == "seed-trace"
+
+
+def test_resumed_run_prefers_persisted_trace_id_over_new_context_and_metadata(monkeypatch):
+    graph = compile_project_team_agent(checkpointer=InMemorySaver())
+    initial_config = {
+        "configurable": {"thread_id": "resume-trace-thread"},
+        "metadata": {"trace_id": "persisted-trace"},
+        "recursion_limit": 20,
+    }
+
+    def fake_run_discovery(_state, *, thread_id=None, parent_model=None, trace_id=None, available_tools=None, executor_cls=None):
+        return {
+            "phase": Phase.DISCOVERY.value,
+            "project_brief": {
+                "objective": "Ship runtime",
+                "scope": ["backend runtime"],
+                "constraints": ["keep lead_agent unchanged"],
+                "deliverables": ["runtime"],
+                "success_criteria": ["tests pass"],
+            },
+            "phase_artifacts": {},
+            "phase_attempts": {"discovery": 1},
+        }
+
+    def fake_run_planning(_state, *, thread_id=None, parent_model=None, trace_id=None, available_tools=None, executor_cls=None):
+        return {
+            "phase": Phase.PLANNING.value,
+            "project_brief": {
+                "objective": "Ship runtime",
+                "scope": ["backend runtime"],
+                "constraints": ["keep lead_agent unchanged"],
+                "deliverables": ["runtime"],
+                "success_criteria": ["tests pass"],
+            },
+            "work_orders": [],
+            "plan_status": PlanStatus.AWAITING_APPROVAL.value,
+            "active_work_order_ids": [],
+            "build_error": None,
+            "qa_gate": None,
+            "delivery_summary": None,
+            "phase_artifacts": {},
+            "phase_attempts": {"discovery": 1, "planning": 1},
+        }
+
+    monkeypatch.setattr("deerflow.project_runtime.graph.run_discovery", fake_run_discovery)
+    monkeypatch.setattr("deerflow.project_runtime.graph.run_planning", fake_run_planning)
+    graph.invoke({"messages": []}, config=initial_config)
+
+    seen_dispatch_trace_ids: list[str | None] = []
+
+    def fake_dispatch(_state, *, thread_id, parent_model=None, trace_id=None, available_tools=None, executor_cls=None):
+        seen_dispatch_trace_ids.append(trace_id)
+        return {
+            "phase": Phase.BUILD.value,
+            "work_orders": [],
+            "active_work_order_ids": [],
+            "agent_reports": [],
+            "build_error": None,
+            "goto": "__end__",
+        }
+
+    monkeypatch.setattr("deerflow.project_runtime.graph.dispatch_build_phase", fake_dispatch)
+    resumed_config = {
+        "configurable": {"thread_id": "resume-trace-thread"},
+        "metadata": {"trace_id": "new-metadata-trace"},
+        "recursion_limit": 20,
+    }
+
+    result = graph.invoke(
+        {"plan_status": PlanStatus.APPROVED.value},
+        config=resumed_config,
+        context={"thread_id": "resume-trace-thread", "trace_id": "new-context-trace"},
+    )
+
+    assert seen_dispatch_trace_ids == ["persisted-trace"]
+    assert result["trace_id"] == "persisted-trace"
+    assert graph.get_state(resumed_config).values["trace_id"] == "persisted-trace"
+
+
+def test_phase_nodes_pass_persisted_trace_id_to_phase_runners(monkeypatch):
+    seen: dict[str, str | None] = {}
+    runtime = SimpleNamespace(context={"thread_id": "thread-1", "model_name": "project-model", "trace_id": "context-trace"})
+    state = {"trace_id": "persisted-trace"}
+
+    def fake_run_discovery(_state, *, thread_id=None, parent_model=None, trace_id=None, available_tools=None, executor_cls=None):
+        seen["discovery"] = trace_id
+        return {"phase": Phase.DISCOVERY.value}
+
+    def fake_run_planning(_state, *, thread_id=None, parent_model=None, trace_id=None, available_tools=None, executor_cls=None):
+        seen["planning"] = trace_id
+        return {"phase": Phase.PLANNING.value}
+
+    def fake_run_delivery(_state, *, thread_id=None, parent_model=None, trace_id=None, available_tools=None, executor_cls=None):
+        seen["delivery"] = trace_id
+        return {"phase": Phase.DELIVERY.value}
+
+    monkeypatch.setattr("deerflow.project_runtime.graph.run_discovery", fake_run_discovery)
+    monkeypatch.setattr("deerflow.project_runtime.graph.run_planning", fake_run_planning)
+    monkeypatch.setattr("deerflow.project_runtime.graph.run_delivery", fake_run_delivery)
+
+    discovery_result = graph_module.discovery_node(state, runtime)
+    planning_result = graph_module.planning_node(state, runtime)
+    delivery_result = graph_module.delivery_node(state, runtime)
+
+    assert seen == {
+        "discovery": "persisted-trace",
+        "planning": "persisted-trace",
+        "delivery": "persisted-trace",
+    }
+    assert discovery_result["trace_id"] == "persisted-trace"
+    assert planning_result["trace_id"] == "persisted-trace"
+    assert delivery_result["trace_id"] == "persisted-trace"
 
 
 def test_approved_run_materializes_build_before_pausing_at_qa_gate_when_qa_blocks():

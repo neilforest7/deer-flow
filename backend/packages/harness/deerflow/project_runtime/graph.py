@@ -39,23 +39,27 @@ def intake_node(state: ProjectThreadState, runtime: Runtime | None = None) -> di
 
 
 def discovery_node(state: ProjectThreadState, runtime: Runtime | None = None) -> dict:
+    active_trace_id = resolve_trace_id(state, runtime=runtime)
     result = run_discovery(
         state,
         thread_id=_resolve_thread_id(runtime),
         parent_model=_resolve_model_name(runtime),
+        trace_id=active_trace_id,
     )
-    result["trace_id"] = resolve_trace_id(state, runtime=runtime)
+    result["trace_id"] = active_trace_id
     result["project_runtime_version"] = project_runtime_version()
     return result
 
 
 def planning_node(state: ProjectThreadState, runtime: Runtime | None = None) -> dict:
+    active_trace_id = resolve_trace_id(state, runtime=runtime)
     result = run_planning(
         state,
         thread_id=_resolve_thread_id(runtime),
         parent_model=_resolve_model_name(runtime),
+        trace_id=active_trace_id,
     )
-    result["trace_id"] = resolve_trace_id(state, runtime=runtime)
+    result["trace_id"] = active_trace_id
     result["project_runtime_version"] = project_runtime_version()
     return result
 
@@ -189,12 +193,14 @@ def qa_gate_node(state: ProjectThreadState, runtime: Runtime | None = None) -> d
 
 
 def delivery_node(state: ProjectThreadState, runtime: Runtime | None = None) -> dict:
+    active_trace_id = resolve_trace_id(state, runtime=runtime)
     result = run_delivery(
         state,
         thread_id=_resolve_thread_id(runtime),
         parent_model=_resolve_model_name(runtime),
+        trace_id=active_trace_id,
     )
-    result["trace_id"] = resolve_trace_id(state, runtime=runtime)
+    result["trace_id"] = active_trace_id
     result["project_runtime_version"] = project_runtime_version()
     return result
 

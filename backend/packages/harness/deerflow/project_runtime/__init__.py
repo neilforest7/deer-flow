@@ -11,7 +11,16 @@ from .dispatcher import (
     select_runnable_work_orders,
 )
 from .graph import compile_project_team_agent, make_project_team_agent
-from .observability import build_qa_metadata, build_runtime_metadata, build_specialist_metadata, project_runtime_version, resolve_trace_id
+from .observability import (
+    build_delivery_specialist_metadata,
+    build_discovery_specialist_metadata,
+    build_planning_specialist_metadata,
+    build_qa_metadata,
+    build_runtime_metadata,
+    build_specialist_metadata,
+    project_runtime_version,
+    resolve_trace_id,
+)
 from .planning import (
     build_discovery_result,
     build_planning_result,
@@ -67,7 +76,10 @@ __all__ = [
     "apply_dispatch_update",
     "build_can_proceed_to_qa",
     "build_delivery_summary",
+    "build_delivery_specialist_metadata",
+    "build_discovery_specialist_metadata",
     "build_discovery_result",
+    "build_planning_specialist_metadata",
     "build_planning_result",
     "build_qa_metadata",
     "build_runtime_metadata",

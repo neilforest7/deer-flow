@@ -542,7 +542,14 @@ class DeerFlowClient:
         self._ensure_agent(config)
 
         state: dict[str, Any] = {"messages": [HumanMessage(content=message)]}
-        context: dict[str, Any] = {"thread_id": thread_id, "model_name": config.get("configurable", {}).get("model_name")}
+        metadata = config.get("metadata", {})
+        trace_id = metadata.get("trace_id") if isinstance(metadata, dict) else None
+        context: dict[str, Any] = {
+            "thread_id": thread_id,
+            "model_name": config.get("configurable", {}).get("model_name"),
+        }
+        if isinstance(trace_id, str) and trace_id:
+            context["trace_id"] = trace_id
         if self._agent_name:
             context["agent_name"] = self._agent_name
 

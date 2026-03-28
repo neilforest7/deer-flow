@@ -106,9 +106,24 @@ def test_discovery_scope_does_not_treat_build_as_ui():
 
 
 def test_execute_discovery_phase_merges_multiple_specialist_briefs():
+    seen_trace_ids: list[str | None] = []
+    seen_run_metadata: dict[str, dict] = {}
+
     class DiscoveryExecutor:
-        def __init__(self, config, tools, parent_model=None, sandbox_state=None, thread_data=None, thread_id=None):
+        def __init__(
+            self,
+            config,
+            tools,
+            parent_model=None,
+            sandbox_state=None,
+            thread_data=None,
+            thread_id=None,
+            trace_id=None,
+            run_metadata=None,
+        ):
             self.config = config
+            seen_trace_ids.append(trace_id)
+            seen_run_metadata[config.name] = dict(run_metadata or {})
 
         def execute(self, task):
             payloads = {
@@ -130,14 +145,24 @@ def test_execute_discovery_phase_merges_multiple_specialist_briefs():
             return SimpleNamespace(status="completed", result=str(payloads[self.config.name]).replace("'", '"'))
 
     brief, specialists, used_specialists = execute_discovery_phase(
-        {"messages": [HumanMessage(content="Implement backend runtime approval flow")]},
+        {
+            "messages": [HumanMessage(content="Implement backend runtime approval flow")],
+            "plan_status": "draft",
+            "phase_attempts": {"discovery": 1},
+        },
         thread_id="thread-1",
+        trace_id="trace-root",
         available_tools=[SimpleNamespace(name="read_file"), SimpleNamespace(name="web_search")],
         executor_cls=DiscoveryExecutor,
     )
 
     assert used_specialists is True
     assert specialists == ["discovery-agent", "architect-agent"]
+    assert seen_trace_ids == ["trace-root", "trace-root"]
+    assert seen_run_metadata["discovery-agent"]["execution_kind"] == "discovery_specialist"
+    assert seen_run_metadata["architect-agent"]["execution_kind"] == "discovery_specialist"
+    assert seen_run_metadata["discovery-agent"]["work_order_id"] == "phase:discovery:discovery-agent:attempt:2"
+    assert seen_run_metadata["architect-agent"]["work_order_id"] == "phase:discovery:architect-agent:attempt:2"
     assert "backend runtime" in brief.scope
     assert "service boundaries" in brief.scope
 
@@ -146,7 +171,17 @@ def test_execute_discovery_phase_scopes_design_agent_to_read_only_tools():
     seen_tools: dict[str, tuple[str, ...]] = {}
 
     class DiscoveryExecutor:
-        def __init__(self, config, tools, parent_model=None, sandbox_state=None, thread_data=None, thread_id=None):
+        def __init__(
+            self,
+            config,
+            tools,
+            parent_model=None,
+            sandbox_state=None,
+            thread_data=None,
+            thread_id=None,
+            trace_id=None,
+            run_metadata=None,
+        ):
             self.config = config
             seen_tools[config.name] = tuple(config.tools or [])
 
@@ -185,9 +220,24 @@ def test_execute_discovery_phase_scopes_design_agent_to_read_only_tools():
 
 
 def test_execute_planning_phase_validates_planner_output():
+    seen_trace_ids: list[str | None] = []
+    seen_run_metadata: list[dict] = []
+
     class PlannerExecutor:
-        def __init__(self, config, tools, parent_model=None, sandbox_state=None, thread_data=None, thread_id=None):
+        def __init__(
+            self,
+            config,
+            tools,
+            parent_model=None,
+            sandbox_state=None,
+            thread_data=None,
+            thread_id=None,
+            trace_id=None,
+            run_metadata=None,
+        ):
             self.config = config
+            seen_trace_ids.append(trace_id)
+            seen_run_metadata.append(dict(run_metadata or {}))
 
         def execute(self, task):
             payload = {
@@ -224,18 +274,36 @@ def test_execute_planning_phase_validates_planner_output():
                 "success_criteria": ["Tests pass"],
             },
             "messages": [HumanMessage(content="Implement backend runtime approval flow")],
+            "plan_status": "awaiting_approval",
+            "phase_attempts": {"planning": 2},
         },
         thread_id="thread-1",
+        trace_id="planning-trace",
         available_tools=[SimpleNamespace(name="read_file"), SimpleNamespace(name="web_search")],
         executor_cls=PlannerExecutor,
     )
 
     assert output.work_orders[0].owner_agent == "backend-agent"
+    assert seen_trace_ids == ["planning-trace"]
+    assert seen_run_metadata[0]["phase"] == "planning"
+    assert seen_run_metadata[0]["execution_kind"] == "planning_specialist"
+    assert seen_run_metadata[0]["owner_agent"] == "planner-agent"
+    assert seen_run_metadata[0]["work_order_id"] == "phase:planning:planner-agent:attempt:3"
 
 
 def test_run_discovery_falls_back_to_deterministic_when_specialist_execution_fails(monkeypatch):
     class FailingExecutor:
-        def __init__(self, config, tools, parent_model=None, sandbox_state=None, thread_data=None, thread_id=None):
+        def __init__(
+            self,
+            config,
+            tools,
+            parent_model=None,
+            sandbox_state=None,
+            thread_data=None,
+            thread_id=None,
+            trace_id=None,
+            run_metadata=None,
+        ):
             pass
 
         def execute(self, task):
@@ -256,7 +324,17 @@ def test_run_discovery_falls_back_to_deterministic_when_specialist_execution_fai
 
 def test_run_planning_uses_specialist_output_when_enabled(monkeypatch):
     class PlannerExecutor:
-        def __init__(self, config, tools, parent_model=None, sandbox_state=None, thread_data=None, thread_id=None):
+        def __init__(
+            self,
+            config,
+            tools,
+            parent_model=None,
+            sandbox_state=None,
+            thread_data=None,
+            thread_id=None,
+            trace_id=None,
+            run_metadata=None,
+        ):
             self.config = config
 
         def execute(self, task):
@@ -308,7 +386,17 @@ def test_run_planning_uses_specialist_output_when_enabled(monkeypatch):
 
 def test_run_planning_falls_back_to_deterministic_when_specialist_fails(monkeypatch):
     class FailingExecutor:
-        def __init__(self, config, tools, parent_model=None, sandbox_state=None, thread_data=None, thread_id=None):
+        def __init__(
+            self,
+            config,
+            tools,
+            parent_model=None,
+            sandbox_state=None,
+            thread_data=None,
+            thread_id=None,
+            trace_id=None,
+            run_metadata=None,
+        ):
             pass
 
         def execute(self, task):
@@ -338,7 +426,17 @@ def test_run_planning_falls_back_to_deterministic_when_specialist_fails(monkeypa
 
 def test_run_planning_raises_when_specialist_fails_and_fallback_is_disabled(monkeypatch):
     class FailingExecutor:
-        def __init__(self, config, tools, parent_model=None, sandbox_state=None, thread_data=None, thread_id=None):
+        def __init__(
+            self,
+            config,
+            tools,
+            parent_model=None,
+            sandbox_state=None,
+            thread_data=None,
+            thread_id=None,
+            trace_id=None,
+            run_metadata=None,
+        ):
             pass
 
         def execute(self, task):

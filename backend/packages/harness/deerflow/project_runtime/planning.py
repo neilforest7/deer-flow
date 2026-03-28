@@ -8,6 +8,11 @@ from typing import Any
 
 from langchain_core.messages import BaseMessage, HumanMessage
 
+from deerflow.project_runtime.observability import (
+    build_discovery_specialist_metadata,
+    build_planning_specialist_metadata,
+    resolve_trace_id,
+)
 from deerflow.project_runtime.prompts import build_discovery_prompt, build_planning_prompt
 from deerflow.project_runtime.registry import (
     get_default_phase_owners,
@@ -321,6 +326,13 @@ def _discovery_specialists_for_request(latest_request: str) -> list[str]:
     return specialists
 
 
+def _next_phase_attempt(state: Mapping[str, Any], phase: str) -> int:
+    phase_attempts = state.get("phase_attempts") or {}
+    if isinstance(phase_attempts, Mapping):
+        return int(phase_attempts.get(phase, 0)) + 1
+    return 1
+
+
 def _execute_specialist_json(
     specialist_name: str,
     task: str,
@@ -329,6 +341,8 @@ def _execute_specialist_json(
     state: Mapping[str, Any],
     thread_id: str | None,
     parent_model: str | None = None,
+    trace_id: str | None = None,
+    run_metadata: Mapping[str, Any] | None = None,
     available_tools: list[Any] | None = None,
     executor_cls=None,
 ) -> dict[str, Any]:
@@ -356,6 +370,8 @@ def _execute_specialist_json(
         sandbox_state=state.get("sandbox"),
         thread_data=state.get("thread_data"),
         thread_id=thread_id,
+        trace_id=trace_id,
+        run_metadata=dict(run_metadata or {}),
     )
     result = executor.execute(task)
     status = str(getattr(result, "status", "") or "").lower()
@@ -369,6 +385,7 @@ def execute_discovery_phase(
     *,
     thread_id: str | None,
     parent_model: str | None = None,
+    trace_id: str | None = None,
     available_tools: list[Any] | None = None,
     executor_cls=None,
 ) -> tuple[ProjectBrief, list[str], bool]:
@@ -376,6 +393,9 @@ def execute_discovery_phase(
     existing_brief_payload = state.get("project_brief") if isinstance(state.get("project_brief"), Mapping) else None
     prompt = build_discovery_prompt(latest_user_request=latest_request, existing_brief=existing_brief_payload)
     existing_brief = validate_project_brief(existing_brief_payload) if existing_brief_payload else None
+    active_trace_id = trace_id or resolve_trace_id(state)
+    attempt = _next_phase_attempt(state, Phase.DISCOVERY.value)
+    plan_status = state.get("plan_status") if isinstance(state.get("plan_status"), str) else None
 
     specialist_names = _discovery_specialists_for_request(latest_request)
     briefs: list[ProjectBrief] = []
@@ -388,6 +408,14 @@ def execute_discovery_phase(
             state=state,
             thread_id=thread_id,
             parent_model=parent_model,
+            trace_id=active_trace_id,
+            run_metadata=build_discovery_specialist_metadata(
+                thread_id=thread_id,
+                plan_status=plan_status,
+                trace_id=active_trace_id,
+                owner_agent=specialist_name,
+                attempt=attempt,
+            ),
             available_tools=available_tools,
             executor_cls=executor_cls,
         )
@@ -402,11 +430,15 @@ def execute_planning_phase(
     *,
     thread_id: str | None,
     parent_model: str | None = None,
+    trace_id: str | None = None,
     available_tools: list[Any] | None = None,
     executor_cls=None,
 ) -> PlanningOutput:
     project_brief = validate_project_brief(state.get("project_brief") or synthesize_project_brief(state))
     latest_request = get_latest_user_message_text(state)
+    active_trace_id = trace_id or resolve_trace_id(state)
+    attempt = _next_phase_attempt(state, Phase.PLANNING.value)
+    plan_status = state.get("plan_status") if isinstance(state.get("plan_status"), str) else None
     prompt = build_planning_prompt(
         project_brief=project_brief.model_dump(mode="json"),
         latest_user_request=latest_request,
@@ -419,6 +451,13 @@ def execute_planning_phase(
         state=state,
         thread_id=thread_id,
         parent_model=parent_model,
+        trace_id=active_trace_id,
+        run_metadata=build_planning_specialist_metadata(
+            thread_id=thread_id,
+            plan_status=plan_status,
+            trace_id=active_trace_id,
+            attempt=attempt,
+        ),
         available_tools=available_tools,
         executor_cls=executor_cls,
     )
@@ -629,6 +668,7 @@ def run_discovery(
     *,
     thread_id: str | None = None,
     parent_model: str | None = None,
+    trace_id: str | None = None,
     available_tools: list[Any] | None = None,
     executor_cls=None,
 ) -> dict[str, Any]:
@@ -639,6 +679,7 @@ def run_discovery(
             state,
             thread_id=thread_id,
             parent_model=parent_model,
+            trace_id=trace_id,
             available_tools=available_tools,
             executor_cls=executor_cls,
         )
@@ -670,6 +711,7 @@ def run_planning(
     *,
     thread_id: str | None = None,
     parent_model: str | None = None,
+    trace_id: str | None = None,
     available_tools: list[Any] | None = None,
     executor_cls=None,
 ) -> dict[str, Any]:
@@ -695,6 +737,7 @@ def run_planning(
                 state,
                 thread_id=thread_id,
                 parent_model=parent_model,
+                trace_id=trace_id,
                 available_tools=available_tools,
                 executor_cls=executor_cls,
             )

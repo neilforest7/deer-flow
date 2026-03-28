@@ -145,7 +145,7 @@ prepare_compose_env() {
 
 compose_cmd() {
     prepare_compose_env
-    docker compose -p deer-flow -f "$REPO_DIR/docker/docker-compose.yaml" "$@"
+    docker compose --env-file "$REPO_DIR/.env" -p deer-flow -f "$REPO_DIR/docker/docker-compose.yaml" "$@"
 }
 
 http_local() {

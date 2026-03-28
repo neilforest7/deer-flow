@@ -178,6 +178,59 @@ def test_list_langsmith_runs_returns_503_when_tracing_not_configured(monkeypatch
     assert response.json()["detail"] == "LangSmith tracing is not configured."
 
 
+def test_list_langsmith_traces_filters_by_thread_metadata(monkeypatch):
+    config = TracingConfig(
+        enabled=True,
+        api_key="lsv2_test",
+        project="deerflow-teamv2",
+        endpoint="https://smith.example.com",
+    )
+    fake_client = FakeLangSmithClient(
+        runs=[
+            DummyRun(
+                run_id="trace-1",
+                name="project_team_agent",
+                run_type="chain",
+                trace_id="trace-1",
+                thread_id="thread-a",
+                request_id="req-a",
+                custom_trace_id="custom-a",
+            ),
+            DummyRun(
+                run_id="trace-2",
+                name="project_team_agent",
+                run_type="chain",
+                trace_id="trace-2",
+                thread_id="thread-b",
+                request_id="req-b",
+                custom_trace_id="custom-b",
+            ),
+        ]
+    )
+    monkeypatch.setattr(observability, "_require_tracing_config", lambda: config)
+    monkeypatch.setattr(observability, "_build_langsmith_client", lambda _config: fake_client)
+
+    with _make_client() as client:
+        response = client.get("/api/observability/langsmith/traces?thread_id=thread-b&limit=20")
+
+    assert response.status_code == 200
+    body = response.json()
+    assert body["project"] == "deerflow-teamv2"
+    assert body["count"] == 1
+    assert body["traces"][0]["id"] == "trace-2"
+    assert body["traces"][0]["thread_id"] == "thread-b"
+    assert body["traces"][0]["custom_trace_id"] == "custom-b"
+    assert fake_client.list_runs_kwargs == {
+        "project_name": "deerflow-teamv2",
+        "trace_id": None,
+        "run_type": None,
+        "is_root": True,
+        "error": None,
+        "start_time": None,
+        "limit": 100,
+    }
+
+
 def test_get_langsmith_trace_returns_tree(monkeypatch):
     config = TracingConfig(
         enabled=True,

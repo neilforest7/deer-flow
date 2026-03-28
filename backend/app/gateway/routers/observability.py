@@ -48,6 +48,15 @@ class LangSmithRunsResponse(BaseModel):
     runs: list[LangSmithRunSummary] = Field(default_factory=list, description="Runs in reverse chronological order.")
 
 
+class LangSmithTracesResponse(BaseModel):
+    project: str = Field(..., description="LangSmith project queried.")
+    count: int = Field(..., description="Number of traces returned.")
+    traces: list[LangSmithRunSummary] = Field(
+        default_factory=list,
+        description="Root trace runs in reverse chronological order.",
+    )
+
+
 class LangSmithTraceResponse(BaseModel):
     project: str = Field(..., description="LangSmith project queried.")
     trace_id: str = Field(..., description="Trace ID / root run ID.")
@@ -192,6 +201,55 @@ def list_langsmith_runs(
     summaries = [_run_to_summary(run) for run in filtered[:limit]]
 
     return LangSmithRunsResponse(project=project, count=len(summaries), runs=summaries)
+
+
+@router.get(
+    "/traces",
+    response_model=LangSmithTracesResponse,
+    summary="List LangSmith Traces",
+    description="List recent root LangSmith traces, with optional filtering by DeerFlow metadata.",
+)
+def list_langsmith_traces(
+    limit: int = Query(default=20, ge=1, le=100),
+    project_name: str | None = Query(default=None, description="Override the default LangSmith project."),
+    thread_id: str | None = Query(default=None, description="Filter by DeerFlow thread_id stored in metadata."),
+    custom_trace_id: str | None = Query(default=None, description="Filter by DeerFlow custom trace_id stored in metadata."),
+    run_type: str | None = Query(default=None, description="Filter by LangSmith run type."),
+    error: bool | None = Query(default=None, description="Filter by whether the trace root run has an error."),
+    start_time: datetime | None = Query(default=None, description="Return only traces that start after this ISO timestamp."),
+) -> LangSmithTracesResponse:
+    config = _require_tracing_config()
+    project = project_name or config.project
+    client = _build_langsmith_client(config)
+
+    fetch_limit = min(limit, 100)
+    if thread_id is not None or custom_trace_id is not None:
+        fetch_limit = 100
+
+    try:
+        runs = list(
+            client.list_runs(
+                project_name=project,
+                trace_id=None,
+                run_type=run_type,
+                is_root=True,
+                error=error,
+                start_time=start_time,
+                limit=fetch_limit,
+            )
+        )
+    except LangSmithError as exc:
+        logger.exception("Failed to list LangSmith traces")
+        raise HTTPException(status_code=502, detail=f"Failed to query LangSmith traces: {exc}") from exc
+
+    filtered = [
+        run
+        for run in runs
+        if _run_matches_metadata_filters(run, thread_id=thread_id, custom_trace_id=custom_trace_id)
+    ]
+    summaries = [_run_to_summary(run) for run in filtered[:limit]]
+
+    return LangSmithTracesResponse(project=project, count=len(summaries), traces=summaries)
 
 
 @router.get(

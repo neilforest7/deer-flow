@@ -4,6 +4,7 @@ __all__ = [
     "SubagentConfig",
     "SubagentExecutor",
     "SubagentResult",
+    "get_available_subagent_names",
     "get_subagent_config",
     "list_subagents",
 ]
@@ -18,10 +19,19 @@ def __getattr__(name: str):
             "SubagentResult": SubagentResult,
         }
         return exports[name]
-    if name in {"get_subagent_config", "list_subagents"}:
-        from .registry import get_subagent_config, list_subagents
+    if name in {
+        "get_available_subagent_names",
+        "get_subagent_config",
+        "list_subagents",
+    }:
+        from .registry import (
+            get_available_subagent_names,
+            get_subagent_config,
+            list_subagents,
+        )
 
         exports = {
+            "get_available_subagent_names": get_available_subagent_names,
             "get_subagent_config": get_subagent_config,
             "list_subagents": list_subagents,
         }

@@ -55,6 +55,43 @@ function getStreamErrorMessage(error: unknown): string {
   return "Request failed.";
 }
 
+const STREAM_RUN_KEY_PREFIX = "lg:stream:";
+
+function getStreamRunKey(threadId: string) {
+  return `${STREAM_RUN_KEY_PREFIX}${threadId}`;
+}
+
+function getStreamRunStorage() {
+  if (typeof window === "undefined") {
+    return null;
+  }
+  return window.sessionStorage;
+}
+
+function readStoredRunId(threadId: string) {
+  return getStreamRunStorage()?.getItem(getStreamRunKey(threadId)) ?? null;
+}
+
+function writeStoredRunId(threadId: string, runId: string) {
+  getStreamRunStorage()?.setItem(getStreamRunKey(threadId), runId);
+}
+
+function removeStoredRunId(threadId: string) {
+  getStreamRunStorage()?.removeItem(getStreamRunKey(threadId));
+}
+
+function canResumeThreadHead(head: {
+  next?: string[];
+  tasks?: Array<{ error?: unknown; interrupts?: unknown[] }>;
+}) {
+  const lastTask = head.tasks?.at(-1);
+  return (
+    (head.next?.length ?? 0) > 0 &&
+    lastTask?.error == null &&
+    (lastTask?.interrupts?.length ?? 0) === 0
+  );
+}
+
 export function useThreadStream({
   threadId,
   context,
@@ -69,6 +106,9 @@ export function useThreadStream({
   // Ref to track current thread ID across async callbacks without causing re-renders,
   // and to allow access to the current thread id in onUpdateEvent
   const threadIdRef = useRef<string | null>(threadId ?? null);
+  const activeRunIdRef = useRef<string | null>(null);
+  const activeRunThreadIdRef = useRef<string | null>(null);
+  const rejoinAttemptedRef = useRef<string | null>(null);
   const startedRef = useRef(false);
 
   const listeners = useRef({
@@ -87,6 +127,9 @@ export function useThreadStream({
     if (!normalizedThreadId) {
       // Just reset for new thread creation when threadId becomes null/undefined
       startedRef.current = false;
+      rejoinAttemptedRef.current = null;
+      activeRunIdRef.current = null;
+      activeRunThreadIdRef.current = null;
       setOnStreamThreadId(normalizedThreadId);
     }
     threadIdRef.current = normalizedThreadId;
@@ -109,15 +152,28 @@ export function useThreadStream({
 
   const queryClient = useQueryClient();
   const updateSubtask = useUpdateSubtask();
+  const client = getAPIClient(isMock);
+
+  const clearActiveRunTracking = useCallback((threadIdToClear?: string | null) => {
+    const trackedThreadId = threadIdToClear ?? activeRunThreadIdRef.current;
+    if (trackedThreadId) {
+      removeStoredRunId(trackedThreadId);
+    }
+    activeRunIdRef.current = null;
+    activeRunThreadIdRef.current = null;
+  }, []);
 
   const thread = useStream<AgentThreadState>({
-    client: getAPIClient(isMock),
+    client,
     assistantId: "lead_agent",
     threadId: onStreamThreadId,
-    reconnectOnMount: true,
+    reconnectOnMount: false,
     fetchStateHistory: { limit: 1 },
     onCreated(meta) {
       handleStreamStart(meta.thread_id);
+      activeRunThreadIdRef.current = meta.thread_id;
+      activeRunIdRef.current = meta.run_id;
+      writeStoredRunId(meta.thread_id, meta.run_id);
       setOnStreamThreadId(meta.thread_id);
     },
     onLangChainEvent(event) {
@@ -173,14 +229,18 @@ export function useThreadStream({
       }
     },
     onError(error) {
+      clearActiveRunTracking();
       setOptimisticMessages([]);
       toast.error(getStreamErrorMessage(error));
     },
     onFinish(state) {
+      clearActiveRunTracking();
       listeners.current.onFinish?.(state.values);
       void queryClient.invalidateQueries({ queryKey: ["threads", "search"] });
     },
   });
+
+  const threadHead = thread.history[0];
 
   // Optimistic messages shown before the server stream responds
   const [optimisticMessages, setOptimisticMessages] = useState<Message[]>([]);
@@ -198,6 +258,72 @@ export function useThreadStream({
       setOptimisticMessages([]);
     }
   }, [thread.messages.length, optimisticMessages.length]);
+
+  useEffect(() => {
+    const normalizedThreadId = threadId ?? null;
+    if (!normalizedThreadId || thread.isLoading || thread.isThreadLoading) {
+      return;
+    }
+    if (!threadHead) {
+      return;
+    }
+    if (rejoinAttemptedRef.current === normalizedThreadId) {
+      return;
+    }
+
+    rejoinAttemptedRef.current = normalizedThreadId;
+    const runId = readStoredRunId(normalizedThreadId);
+    if (!runId) {
+      return;
+    }
+
+    // Completed, interrupted, or failed heads should render from history only.
+    if (!canResumeThreadHead(threadHead)) {
+      removeStoredRunId(normalizedThreadId);
+      return;
+    }
+
+    activeRunThreadIdRef.current = normalizedThreadId;
+    activeRunIdRef.current = runId;
+    void thread.joinStream(runId, "-1").catch((error) => {
+      console.error(
+        `Failed to resume stream for thread ${normalizedThreadId}:`,
+        error,
+      );
+      clearActiveRunTracking(normalizedThreadId);
+    });
+  }, [
+    clearActiveRunTracking,
+    thread,
+    threadHead,
+    threadId,
+    thread.isLoading,
+    thread.isThreadLoading,
+  ]);
+
+  const stopThread = useCallback(async () => {
+    const trackedThreadId = activeRunThreadIdRef.current ?? threadIdRef.current;
+    const runId =
+      activeRunIdRef.current ??
+      (trackedThreadId ? readStoredRunId(trackedThreadId) : null);
+
+    if (trackedThreadId && runId) {
+      try {
+        await client.runs.cancel(trackedThreadId, runId);
+      } catch (error) {
+        console.warn(
+          `Failed to cancel run ${runId} for thread ${trackedThreadId}:`,
+          error,
+        );
+      } finally {
+        clearActiveRunTracking(trackedThreadId);
+      }
+    } else {
+      clearActiveRunTracking(trackedThreadId);
+    }
+
+    await thread.stop();
+  }, [clearActiveRunTracking, client.runs, thread]);
 
   const sendMessage = useCallback(
     async (
@@ -398,14 +524,19 @@ export function useThreadStream({
     [thread, _handleOnStart, t.uploads.uploadingFiles, context, queryClient],
   );
 
-  // Merge thread with optimistic messages for display
-  const mergedThread =
-    optimisticMessages.length > 0
-      ? ({
-          ...thread,
-          messages: [...thread.messages, ...optimisticMessages],
-        } as typeof thread)
-      : thread;
+  const mergedThread = Object.create(thread) as typeof thread;
+  Object.defineProperty(mergedThread, "stop", {
+    configurable: true,
+    enumerable: true,
+    value: stopThread,
+  });
+  if (optimisticMessages.length > 0) {
+    Object.defineProperty(mergedThread, "messages", {
+      configurable: true,
+      enumerable: true,
+      value: [...thread.messages, ...optimisticMessages],
+    });
+  }
 
   return [mergedThread, sendMessage, isUploading] as const;
 }

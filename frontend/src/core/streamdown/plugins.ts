@@ -9,7 +9,8 @@ import { rehypeSplitWordsIntoSpans } from "../rehype";
 export const streamdownPlugins = {
   remarkPlugins: [
     remarkGfm,
-    [remarkMath, { singleDollarTextMath: true }],
+    // Conversation text frequently contains currency, template syntax, and mixed-language summaries.
+    [remarkMath, { singleDollarTextMath: false }],
   ] as StreamdownProps["remarkPlugins"],
   rehypePlugins: [
     rehypeRaw,
@@ -20,7 +21,8 @@ export const streamdownPlugins = {
 export const streamdownPluginsWithWordAnimation = {
   remarkPlugins: [
     remarkGfm,
-    [remarkMath, { singleDollarTextMath: true }],
+    // Conversation text frequently contains currency, template syntax, and mixed-language summaries.
+    [remarkMath, { singleDollarTextMath: false }],
   ] as StreamdownProps["remarkPlugins"],
   rehypePlugins: [
     [rehypeKatex, { output: "html" }],
@@ -33,7 +35,8 @@ export const humanMessagePlugins = {
   remarkPlugins: [
     // Use remark-gfm without autolink literals by not including it
     // Only include math support for human messages
-    [remarkMath, { singleDollarTextMath: true }],
+    // Conversation text frequently contains currency, template syntax, and mixed-language summaries.
+    [remarkMath, { singleDollarTextMath: false }],
   ] as StreamdownProps["remarkPlugins"],
   rehypePlugins: [
     [rehypeKatex, { output: "html" }],

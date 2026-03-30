@@ -179,7 +179,7 @@ def _state_to_project_detail(thread_id: str, checkpoint_data: dict[str, Any]) ->
 async def list_projects() -> ProjectsListResponse:
     """List all project_team_agent threads."""
     async with get_checkpointer() as checkpointer:
-        all_threads = list(checkpointer.list())
+        all_threads = list(checkpointer.list({}))
 
     # Filter for project_team_agent threads
     project_threads = [

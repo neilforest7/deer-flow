@@ -1,12 +1,13 @@
 """Projects API router for project_team_agent runtime."""
 import logging
 from typing import Any
+import aiosqlite
 
 from fastapi import APIRouter, HTTPException
 from langgraph_sdk import get_client
 from pydantic import BaseModel
 
-from deerflow.agents.checkpointer.async_provider import make_checkpointer
+from deerflow.config import get_app_config
 
 logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/api/projects", tags=["projects"])
@@ -178,23 +179,33 @@ def _state_to_project_detail(thread_id: str, checkpoint_data: dict[str, Any]) ->
 @router.get("/", response_model=ProjectsListResponse)
 async def list_projects() -> ProjectsListResponse:
     """List all project_team_agent threads."""
-    async with get_checkpointer() as checkpointer:
-        # Query all threads by iterating without thread_id filter
-        all_threads = []
-        async for thread in checkpointer.alist({"configurable": {}}, filter={"metadata": {"assistant_id": "project_team_agent"}}):
-            all_threads.append(thread)
+    config = get_app_config()
+    db_path = config.langgraph.checkpointer_db_path
 
-    projects = [
-        Project(
-            id=thread.get("thread_id", ""),
-            title=_extract_project_title(thread.get("values", {})),
-            phase=thread.get("values", {}).get("phase", "intake"),
-            plan_status=thread.get("values", {}).get("plan_status", "draft"),
-            created_at=thread.get("created_at", ""),
-            updated_at=thread.get("updated_at", "")
-        )
-        for thread in all_threads
-    ]
+    async with aiosqlite.connect(db_path) as db:
+        cursor = await db.execute("""
+            SELECT DISTINCT thread_id, checkpoint, metadata
+            FROM checkpoints
+            WHERE json_extract(metadata, '$.assistant_id') = 'project_team_agent'
+            ORDER BY thread_ts DESC
+        """)
+        rows = await cursor.fetchall()
+
+    projects = []
+    for row in rows:
+        thread_id, checkpoint_data, metadata = row
+        # Parse checkpoint to get state
+        import json
+        state = json.loads(checkpoint_data).get("channel_values", {})
+
+        projects.append(Project(
+            id=thread_id,
+            title=_extract_project_title(state),
+            phase=state.get("phase", "intake"),
+            plan_status=state.get("plan_status", "draft"),
+            created_at="",
+            updated_at=""
+        ))
 
     return ProjectsListResponse(projects=projects)
 

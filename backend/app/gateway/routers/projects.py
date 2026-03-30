@@ -182,14 +182,19 @@ async def list_projects() -> ProjectsListResponse:
     # LangGraph stores checkpoints in its own database
     db_path = "/app/backend/.deer-flow/langgraph.db"
 
-    async with aiosqlite.connect(db_path) as db:
-        cursor = await db.execute("""
-            SELECT DISTINCT thread_id, checkpoint, metadata
-            FROM checkpoints
-            WHERE json_extract(metadata, '$.assistant_id') = 'project_team_agent'
-            ORDER BY thread_ts DESC
-        """)
-        rows = await cursor.fetchall()
+    try:
+        async with aiosqlite.connect(db_path) as db:
+            cursor = await db.execute("""
+                SELECT DISTINCT thread_id, checkpoint, metadata
+                FROM checkpoints
+                WHERE json_extract(metadata, '$.assistant_id') = 'project_team_agent'
+                ORDER BY thread_ts DESC
+            """)
+            rows = await cursor.fetchall()
+    except Exception as e:
+        logger.warning(f"Failed to query checkpoints: {e}")
+        # Return empty list if database doesn't exist or has no tables yet
+        return ProjectsListResponse(projects=[])
 
     projects = []
     for row in rows:

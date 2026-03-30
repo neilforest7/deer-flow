@@ -178,25 +178,22 @@ def _state_to_project_detail(thread_id: str, checkpoint_data: dict[str, Any]) ->
 @router.get("/", response_model=ProjectsListResponse)
 async def list_projects() -> ProjectsListResponse:
     """List all project_team_agent threads."""
-    client = get_langgraph_client()
-
-    # List all threads and filter for project_team_agent
-    threads = await client.threads.list()
-    project_threads = [
-        thread for thread in threads
-        if thread.get("metadata", {}).get("assistant_id") == "project_team_agent"
-    ]
+    async with get_checkpointer() as checkpointer:
+        # Query all threads by iterating without thread_id filter
+        all_threads = []
+        async for thread in checkpointer.alist({"configurable": {}}, filter={"metadata": {"assistant_id": "project_team_agent"}}):
+            all_threads.append(thread)
 
     projects = [
         Project(
-            id=thread["thread_id"],
+            id=thread.get("thread_id", ""),
             title=_extract_project_title(thread.get("values", {})),
             phase=thread.get("values", {}).get("phase", "intake"),
             plan_status=thread.get("values", {}).get("plan_status", "draft"),
             created_at=thread.get("created_at", ""),
             updated_at=thread.get("updated_at", "")
         )
-        for thread in project_threads
+        for thread in all_threads
     ]
 
     return ProjectsListResponse(projects=projects)
@@ -210,28 +207,29 @@ async def get_project_detail(thread_id: str) -> ProjectDetail:
     client = get_langgraph_client()
 
     try:
-        thread = await client.threads.get(thread_id)
+        state = await client.threads.get_state(thread_id)
     except Exception:
         raise HTTPException(status_code=404, detail=f"Project {thread_id} not found")
 
     # Verify it's a project_team_agent thread
-    if thread.get("metadata", {}).get("assistant_id") != "project_team_agent":
+    metadata = state.get("metadata", {})
+    if metadata.get("assistant_id") != "project_team_agent":
         raise HTTPException(status_code=404, detail=f"Project {thread_id} not found")
 
-    state = thread.get("values", {})
+    values = state.get("values", {})
     return ProjectDetail(
         id=thread_id,
-        title=_extract_project_title(state),
-        phase=state.get("phase", "intake"),
-        plan_status=state.get("plan_status", "draft"),
-        created_at=thread.get("created_at", ""),
-        updated_at=thread.get("updated_at", ""),
-        project_brief=state.get("project_brief"),
-        work_orders=state.get("work_orders", []),
-        agent_reports=state.get("agent_reports", []),
-        qa_gate=state.get("qa_gate"),
-        delivery_summary=state.get("delivery_summary"),
-        phase_artifacts=state.get("phase_artifacts", {})
+        title=_extract_project_title(values),
+        phase=values.get("phase", "intake"),
+        plan_status=values.get("plan_status", "draft"),
+        created_at=state.get("created_at", ""),
+        updated_at=state.get("updated_at", ""),
+        project_brief=values.get("project_brief"),
+        work_orders=values.get("work_orders", []),
+        agent_reports=values.get("agent_reports", []),
+        qa_gate=values.get("qa_gate"),
+        delivery_summary=values.get("delivery_summary"),
+        phase_artifacts=values.get("phase_artifacts", {})
     )
 
 

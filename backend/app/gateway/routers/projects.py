@@ -179,7 +179,7 @@ def _state_to_project_detail(thread_id: str, checkpoint_data: dict[str, Any]) ->
 async def list_projects() -> ProjectsListResponse:
     """List all project_team_agent threads."""
     async with get_checkpointer() as checkpointer:
-        all_threads = list(checkpointer.list({}))
+        all_threads = [thread async for thread in checkpointer.alist({})]
 
     # Filter for project_team_agent threads
     project_threads = [
@@ -199,7 +199,7 @@ async def list_projects() -> ProjectsListResponse:
 async def get_project_detail(thread_id: str) -> ProjectDetail:
     """Get detailed project information."""
     async with get_checkpointer() as checkpointer:
-        checkpoint_data = checkpointer.get(thread_id)
+        checkpoint_data = await checkpointer.aget({"configurable": {"thread_id": thread_id}})
 
     if not checkpoint_data:
         raise HTTPException(status_code=404, detail=f"Project {thread_id} not found")

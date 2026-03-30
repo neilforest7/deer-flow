@@ -2,9 +2,13 @@
 
 ## Status
 
+**✅ COMPLETED - M1 Implementation Finished**
+
 - Revision basis: `origin/main`
 - Scope: backend runtime only
 - Goal: add an optional, isolated team runtime without changing default `lead_agent` behavior
+- **Completion date**: 2026-03-30
+- **All requirements met**: All M1 deliverables have been implemented and verified
 
 ## Summary
 
@@ -24,25 +28,26 @@ The M1 deliverable is a backend runtime that satisfies these requirements:
 
 ## Current Implementation Status
 
-This document now targets an incremental baseline instead of a clean-room implementation.
+**✅ ALL M1 REQUIREMENTS COMPLETED**
 
-Already landed in code:
+Fully implemented and verified:
 
-- `project_team_agent` exists as a separate runtime
-- `ProjectThreadState`, canonical runtime types, approval routing, build dispatch, QA gate, and project client wrappers already exist
-- build-phase owner agents execute through `SubagentExecutor`
-- executable QA checks already run through `qa-agent`
-
-Previously missing before this revision:
-
-- `discovery`, `planning`, and `delivery` were deterministic helpers rather than real phase-specialist executions
-- `discovery-agent`, `architect-agent`, `planner-agent`, and `delivery-agent` were registered but not wired into runtime phase execution
-- the PRD did not distinguish “specialist exists in registry” from “specialist is already part of the active execution path”
-
-The revised implementation supports two compatible modes:
-
-- default compatibility mode keeps deterministic non-build phases available
-- phase-specialist mode executes `discovery`, `planning`, and `delivery` through DeerFlow subagent substrate
+- ✅ `project_team_agent` exists as a separate runtime graph
+- ✅ `ProjectThreadState`, canonical runtime types (WorkOrder, ProjectBrief, AgentReport, QAGate, DeliverySummary)
+- ✅ Approval routing with `/approve`, `/revise`, `/cancel` commands
+- ✅ Build dispatch through `SubagentExecutor` for all build-phase specialists
+- ✅ QA gate with executable checks via `qa-agent`
+- ✅ **Discovery phase** executes real specialists (`discovery-agent`, `architect-agent`, `design-agent`) via `SubagentExecutor`
+- ✅ **Planning phase** executes real specialist (`planner-agent`) via `SubagentExecutor`
+- ✅ **Delivery phase** executes real specialist (`delivery-agent`) via `SubagentExecutor`
+- ✅ Dual-mode support: specialist execution with deterministic fallback (controlled by `allow_deterministic_phase_fallback` config)
+- ✅ Phase execution tracking via `phase_artifacts` (records “specialist”, “deterministic”, or “qa-replan” mode)
+- ✅ All specialists fully wired into runtime execution path
+- ✅ Project client wrappers (`project_chat`, `project_stream`) in `deerflow.client`
+- ✅ Checkpointer-based persistence with multi-turn support
+- ✅ Memory isolation (project runtime never writes to long-term memory)
+- ✅ LangSmith tracing integration with runtime metadata
+- ✅ ACP as optional extension (controlled by specialist allowlists)
 
 ## Architecture And Boundaries
 

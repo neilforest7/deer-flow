@@ -179,8 +179,8 @@ def _state_to_project_detail(thread_id: str, checkpoint_data: dict[str, Any]) ->
 @router.get("/", response_model=ProjectsListResponse)
 async def list_projects() -> ProjectsListResponse:
     """List all project_team_agent threads."""
-    config = get_app_config()
-    db_path = config.langgraph.checkpointer_db_path
+    # LangGraph stores checkpoints in its own database
+    db_path = "/app/backend/.deer-flow/langgraph.db"
 
     async with aiosqlite.connect(db_path) as db:
         cursor = await db.execute("""

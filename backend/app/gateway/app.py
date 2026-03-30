@@ -13,6 +13,7 @@ from app.gateway.routers import (
     memory,
     models,
     observability,
+    projects,
     skills,
     suggestions,
     threads,
@@ -150,6 +151,10 @@ This gateway provides custom endpoints for models, MCP configuration, skills, an
                 "description": "Inspect LangSmith tracing configuration, runs, and trace trees",
             },
             {
+                "name": "projects",
+                "description": "Manage project_team_agent projects and workflows",
+            },
+            {
                 "name": "health",
                 "description": "Health check and system status endpoints",
             },
@@ -191,6 +196,9 @@ This gateway provides custom endpoints for models, MCP configuration, skills, an
 
     # LangSmith observability API is mounted at /api/observability/langsmith/*
     app.include_router(observability.router)
+
+    # Projects API is mounted at /api/projects
+    app.include_router(projects.router)
 
     @app.get("/health", tags=["health"])
     async def health_check() -> dict:

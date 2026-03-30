@@ -1,6 +1,6 @@
 # Project Team Frontend Integration Plan
 
-**Status**: 🚧 In Progress (Week 2 Complete)
+**Status**: ✅ Complete
 **Created**: 2026-03-30
 **Last Updated**: 2026-03-30
 **Target**: Expose project_team runtime to frontend with dedicated UI
@@ -20,8 +20,30 @@
   - Created `src/core/projects/hooks.ts` with React Query hooks (5s polling)
   - Commit: `4f58105`
 
+- **Week 3: UI Foundation** - Sidebar tabs and project list complete
+  - Created `workspace-tabs.tsx` for Chats/Projects tab switcher
+  - Created `project-list.tsx` with phase badges and navigation
+  - Created `create-project-dialog.tsx` with objective input
+  - Added `/workspace/projects` list page
+  - Added `/workspace/projects/[thread_id]` dashboard page
+  - Modified `workspace-sidebar.tsx` to integrate tabs and conditional rendering
+
+- **Week 4: Dashboard Core** - Approval interface and overview tab complete
+  - Created `approval-section.tsx` with approve/revise/cancel actions
+  - Created `revise-dialog.tsx` for plan revision feedback
+  - Created `overview-tab.tsx` displaying project brief details
+  - Updated dashboard page with tabs navigation (Overview/Work Orders/Specialists)
+  - Integrated approval section for awaiting_approval phase
+
+- **Week 5: Dashboard Details** - Work orders and specialists tabs complete
+  - Created `work-orders-tab.tsx` displaying work orders with status badges
+  - Created `specialists-tab.tsx` with accordion layout for agent reports
+  - Created `phase-progress.tsx` visual progress indicator
+  - Integrated all tabs into dashboard page
+  - Added Accordion component from shadcn
+
 ### 🚧 In Progress
-- **Week 3: UI Foundation** - Sidebar tabs and project list (Not Started)
+- None - All planned features complete
 
 ### 📅 Planned
 - **Week 4: Dashboard Core** - Approval interface and overview tab
@@ -448,25 +470,25 @@ src/app/workspace/projects/
 - [x] Verify polling behavior
 
 ### Week 3: UI Foundation
-- [ ] Modify sidebar to add Chats/Projects tabs
-- [ ] Create `project-list.tsx` component
-- [ ] Create `create-project-dialog.tsx`
-- [ ] Add routes: `/workspace/projects` and `/workspace/projects/[thread_id]`
-- [ ] Test navigation flow
+- [x] Modify sidebar to add Chats/Projects tabs
+- [x] Create `project-list.tsx` component
+- [x] Create `create-project-dialog.tsx`
+- [x] Add routes: `/workspace/projects` and `/workspace/projects/[thread_id]`
+- [x] Test navigation flow
 
 ### Week 4: Dashboard Core
-- [ ] Create dashboard page layout
-- [ ] Implement `approval-section.tsx`
-- [ ] Implement `revise-dialog.tsx`
-- [ ] Implement `overview-tab.tsx`
-- [ ] Test approval/revise/cancel flows
+- [x] Create dashboard page layout
+- [x] Implement `approval-section.tsx`
+- [x] Implement `revise-dialog.tsx`
+- [x] Implement `overview-tab.tsx`
+- [x] Test approval/revise/cancel flows
 
 ### Week 5: Dashboard Details
-- [ ] Implement `work-orders-tab.tsx`
-- [ ] Implement `specialists-tab.tsx`
-- [ ] Add phase progress indicator
-- [ ] Style polish and responsive design
-- [ ] End-to-end testing
+- [x] Implement `work-orders-tab.tsx`
+- [x] Implement `specialists-tab.tsx`
+- [x] Add phase progress indicator
+- [x] Style polish and responsive design
+- [x] End-to-end testing
 
 ## Acceptance Criteria
 

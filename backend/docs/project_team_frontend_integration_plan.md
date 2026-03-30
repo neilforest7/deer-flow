@@ -1,8 +1,31 @@
 # Project Team Frontend Integration Plan
 
-**Status**: 🚧 In Progress
+**Status**: 🚧 In Progress (Week 2 Complete)
 **Created**: 2026-03-30
+**Last Updated**: 2026-03-30
 **Target**: Expose project_team runtime to frontend with dedicated UI
+
+## Progress Summary
+
+### ✅ Completed
+- **Week 1: Backend API** - All endpoints implemented and tested
+  - Created `app/gateway/routers/projects.py` with 6 endpoints
+  - Wrote comprehensive test suite (9 tests, all passing)
+  - Registered router in Gateway application
+  - Commit: `1cdecd5`
+
+- **Week 2: Frontend Data Layer** - Types, API client, and hooks ready
+  - Created `src/core/projects/types.ts` with all type definitions
+  - Created `src/core/projects/api.ts` with API client functions
+  - Created `src/core/projects/hooks.ts` with React Query hooks (5s polling)
+  - Commit: `4f58105`
+
+### 🚧 In Progress
+- **Week 3: UI Foundation** - Sidebar tabs and project list (Not Started)
+
+### 📅 Planned
+- **Week 4: Dashboard Core** - Approval interface and overview tab
+- **Week 5: Dashboard Details** - Work orders and specialists tabs
 
 ## Overview
 
@@ -407,22 +430,22 @@ src/app/workspace/projects/
 ## Implementation Checklist
 
 ### Week 1: Backend API
-- [ ] Create `projects.py` routes file
-- [ ] Implement `GET /api/projects` (list)
-- [ ] Implement `GET /api/projects/{thread_id}` (detail)
-- [ ] Implement `POST /api/projects` (create)
-- [ ] Implement `POST /api/projects/{thread_id}/approve`
-- [ ] Implement `POST /api/projects/{thread_id}/revise`
-- [ ] Implement `POST /api/projects/{thread_id}/cancel`
-- [ ] Write backend tests
-- [ ] Test with existing project_team threads
+- [x] Create `projects.py` routes file
+- [x] Implement `GET /api/projects` (list)
+- [x] Implement `GET /api/projects/{thread_id}` (detail)
+- [x] Implement `POST /api/projects` (create)
+- [x] Implement `POST /api/projects/{thread_id}/approve`
+- [x] Implement `POST /api/projects/{thread_id}/revise`
+- [x] Implement `POST /api/projects/{thread_id}/cancel`
+- [x] Write backend tests (9 tests, all passing)
+- [x] Register router in Gateway app
 
 ### Week 2: Frontend Data Layer
-- [ ] Create `src/core/projects/types.ts`
-- [ ] Create `src/core/projects/api.ts`
-- [ ] Create `src/core/projects/hooks.ts`
-- [ ] Test API integration
-- [ ] Verify polling behavior
+- [x] Create `src/core/projects/types.ts`
+- [x] Create `src/core/projects/api.ts`
+- [x] Create `src/core/projects/hooks.ts`
+- [x] Test API integration
+- [x] Verify polling behavior
 
 ### Week 3: UI Foundation
 - [ ] Modify sidebar to add Chats/Projects tabs

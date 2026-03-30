@@ -176,10 +176,10 @@ def _state_to_project_detail(thread_id: str, checkpoint_data: dict[str, Any]) ->
 
 # API Endpoints
 @router.get("/", response_model=ProjectsListResponse)
-def list_projects() -> ProjectsListResponse:
+async def list_projects() -> ProjectsListResponse:
     """List all project_team_agent threads."""
-    checkpointer = get_checkpointer()
-    all_threads = checkpointer.list()
+    async with get_checkpointer() as checkpointer:
+        all_threads = list(checkpointer.list())
 
     # Filter for project_team_agent threads
     project_threads = [
@@ -196,10 +196,10 @@ def list_projects() -> ProjectsListResponse:
 
 
 @router.get("/{thread_id}", response_model=ProjectDetail)
-def get_project_detail(thread_id: str) -> ProjectDetail:
+async def get_project_detail(thread_id: str) -> ProjectDetail:
     """Get detailed project information."""
-    checkpointer = get_checkpointer()
-    checkpoint_data = checkpointer.get(thread_id)
+    async with get_checkpointer() as checkpointer:
+        checkpoint_data = checkpointer.get(thread_id)
 
     if not checkpoint_data:
         raise HTTPException(status_code=404, detail=f"Project {thread_id} not found")

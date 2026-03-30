@@ -178,19 +178,28 @@ def _state_to_project_detail(thread_id: str, checkpoint_data: dict[str, Any]) ->
 @router.get("/", response_model=ProjectsListResponse)
 async def list_projects() -> ProjectsListResponse:
     """List all project_team_agent threads."""
-    async with get_checkpointer() as checkpointer:
-        all_threads = [thread async for thread in checkpointer.alist({"configurable": {}})]
+    client = get_langgraph_client()
 
-    # Filter for project_team_agent threads
+    # List all threads and filter for project_team_agent
+    threads = await client.threads.list()
     project_threads = [
-        thread for thread in all_threads
+        thread for thread in threads
         if thread.get("metadata", {}).get("assistant_id") == "project_team_agent"
     ]
 
     projects = [
-        _state_to_project(thread["thread_id"], thread)
+        Project(
+            id=thread["thread_id"],
+            title=_extract_project_title(thread.get("values", {})),
+            phase=thread.get("values", {}).get("phase", "intake"),
+            plan_status=thread.get("values", {}).get("plan_status", "draft"),
+            created_at=thread.get("created_at", ""),
+            updated_at=thread.get("updated_at", "")
+        )
         for thread in project_threads
     ]
+
+    return ProjectsListResponse(projects=projects)
 
     return ProjectsListResponse(projects=projects)
 
@@ -198,17 +207,32 @@ async def list_projects() -> ProjectsListResponse:
 @router.get("/{thread_id}", response_model=ProjectDetail)
 async def get_project_detail(thread_id: str) -> ProjectDetail:
     """Get detailed project information."""
-    async with get_checkpointer() as checkpointer:
-        checkpoint_data = await checkpointer.aget({"configurable": {"thread_id": thread_id}})
+    client = get_langgraph_client()
 
-    if not checkpoint_data:
+    try:
+        thread = await client.threads.get(thread_id)
+    except Exception:
         raise HTTPException(status_code=404, detail=f"Project {thread_id} not found")
 
     # Verify it's a project_team_agent thread
-    if checkpoint_data.get("metadata", {}).get("assistant_id") != "project_team_agent":
+    if thread.get("metadata", {}).get("assistant_id") != "project_team_agent":
         raise HTTPException(status_code=404, detail=f"Project {thread_id} not found")
 
-    return _state_to_project_detail(thread_id, checkpoint_data)
+    state = thread.get("values", {})
+    return ProjectDetail(
+        id=thread_id,
+        title=_extract_project_title(state),
+        phase=state.get("phase", "intake"),
+        plan_status=state.get("plan_status", "draft"),
+        created_at=thread.get("created_at", ""),
+        updated_at=thread.get("updated_at", ""),
+        project_brief=state.get("project_brief"),
+        work_orders=state.get("work_orders", []),
+        agent_reports=state.get("agent_reports", []),
+        qa_gate=state.get("qa_gate"),
+        delivery_summary=state.get("delivery_summary"),
+        phase_artifacts=state.get("phase_artifacts", {})
+    )
 
 
 @router.post("/", response_model=CreateProjectResponse)

@@ -2,7 +2,7 @@
 
 **Status**: ✅ Complete
 **Created**: 2026-03-30
-**Last Updated**: 2026-03-30
+**Last Updated**: 2026-03-31
 **Target**: Expose project_team runtime to frontend with dedicated UI
 
 ## Progress Summary
@@ -13,6 +13,13 @@
   - Wrote comprehensive test suite (9 tests, all passing)
   - Registered router in Gateway application
   - Commit: `1cdecd5`
+  - **Bug fixes (2026-03-31)** - Critical deployment issues resolved:
+    - Fixed database path: Changed from hardcoded `/app/backend/.deer-flow/langgraph.db` to config-based `{config.deer_flow_home}/checkpoints.db`
+    - Fixed LangGraph URL: Changed from `http://localhost:2024` to `http://langgraph:2024` for Docker service resolution
+    - Fixed metadata field: Changed filter from `metadata.assistant_id` to `metadata.graph_id` (correct LangGraph schema)
+    - Removed unused `get_checkpointer()` function
+    - Removed duplicate return statement
+    - Commits: `6762693`, `6011450`
 
 - **Week 2: Frontend Data Layer** - Types, API client, and hooks ready
   - Created `src/core/projects/types.ts` with all type definitions

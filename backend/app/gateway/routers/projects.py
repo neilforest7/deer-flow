@@ -184,7 +184,7 @@ async def list_projects() -> ProjectsListResponse:
             cursor = await db.execute("""
                 SELECT DISTINCT thread_id, checkpoint, metadata
                 FROM checkpoints
-                WHERE json_extract(metadata, '$.assistant_id') = 'project_team_agent'
+                WHERE json_extract(metadata, '$.graph_id') = 'project_team_agent'
                 ORDER BY thread_ts DESC
             """)
             rows = await cursor.fetchall()
@@ -224,7 +224,7 @@ async def get_project_detail(thread_id: str) -> ProjectDetail:
 
     # Verify it's a project_team_agent thread
     metadata = state.get("metadata", {})
-    if metadata.get("assistant_id") != "project_team_agent":
+    if metadata.get("graph_id") != "project_team_agent":
         raise HTTPException(status_code=404, detail=f"Project {thread_id} not found")
 
     values = state.get("values", {})

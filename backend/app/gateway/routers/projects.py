@@ -101,15 +101,11 @@ class ReviseProjectRequest(BaseModel):
     feedback: str
 
 
-# Helper functions
-def get_checkpointer():
-    """Get LangGraph checkpointer instance."""
-    return make_checkpointer()
-
-
 def get_langgraph_client():
     """Get LangGraph SDK client."""
-    return get_client(url="http://localhost:2024")
+    # Inside Docker, use service name; outside, use localhost
+    langgraph_url = "http://langgraph:2024"
+    return get_client(url=langgraph_url)
 
 
 def _extract_project_title(state: dict[str, Any]) -> str:
@@ -179,8 +175,9 @@ def _state_to_project_detail(thread_id: str, checkpoint_data: dict[str, Any]) ->
 @router.get("/", response_model=ProjectsListResponse)
 async def list_projects() -> ProjectsListResponse:
     """List all project_team_agent threads."""
-    # LangGraph stores checkpoints in its own database
-    db_path = "/app/backend/.deer-flow/langgraph.db"
+    # LangGraph stores checkpoints in its database (configurable, default: checkpoints.db)
+    config = get_app_config()
+    db_path = f"{config.deer_flow_home}/checkpoints.db"
 
     try:
         async with aiosqlite.connect(db_path) as db:
@@ -211,8 +208,6 @@ async def list_projects() -> ProjectsListResponse:
             created_at="",
             updated_at=""
         ))
-
-    return ProjectsListResponse(projects=projects)
 
     return ProjectsListResponse(projects=projects)
 

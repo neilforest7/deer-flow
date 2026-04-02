@@ -94,6 +94,19 @@ export function ArtifactFileDetail({
   const [viewMode, setViewMode] = useState<"code" | "preview">("code");
   const [isInstalling, setIsInstalling] = useState(false);
   const { isMock } = useThread();
+  const previewUrl = useMemo(() => {
+    if (isWriteFile) {
+      return undefined;
+    }
+    if (language === "html") {
+      return urlOfArtifact({ filepath, threadId, preview: true, isMock });
+    }
+    return url;
+  }, [filepath, isMock, isWriteFile, language, threadId, url]);
+  const openInNewWindowUrl =
+    language === "html"
+      ? previewUrl
+      : urlOfArtifact({ filepath, threadId, isMock });
   useEffect(() => {
     if (isSupportPreview) {
       setViewMode("preview");
@@ -189,7 +202,7 @@ export function ArtifactFileDetail({
             )}
             {!isWriteFile && (
               <a
-                href={urlOfArtifact({ filepath, threadId })}
+                href={openInNewWindowUrl}
                 target="_blank"
                 rel="noopener noreferrer"
               >
@@ -247,7 +260,7 @@ export function ArtifactFileDetail({
               content={displayContent}
               isWriteFile={isWriteFile}
               language={language ?? "text"}
-              url={url}
+              url={previewUrl}
             />
           )}
         {isCodeFile && viewMode === "code" && (
@@ -260,7 +273,7 @@ export function ArtifactFileDetail({
         {!isCodeFile && (
           <iframe
             className="size-full"
-            src={urlOfArtifact({ filepath, threadId, isMock })}
+            src={urlOfArtifact({ filepath, threadId, preview: true, isMock })}
           />
         )}
       </ArtifactContent>
@@ -297,7 +310,7 @@ export function ArtifactFilePreview({
       <iframe
         className="size-full"
         title="Artifact preview"
-        sandbox="allow-scripts allow-forms"
+        sandbox="allow-scripts allow-forms allow-downloads"
         {...(isWriteFile ? { srcDoc: content } : url ? { src: url } : {})}
       />
     );

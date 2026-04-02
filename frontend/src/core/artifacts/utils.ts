@@ -5,17 +5,28 @@ export function urlOfArtifact({
   filepath,
   threadId,
   download = false,
+  preview = false,
   isMock = false,
 }: {
   filepath: string;
   threadId: string;
   download?: boolean;
+  preview?: boolean;
   isMock?: boolean;
 }) {
-  if (isMock) {
-    return `${getBackendBaseURL()}/mock/api/threads/${threadId}/artifacts${filepath}${download ? "?download=true" : ""}`;
+  const query = new URLSearchParams();
+  if (download) {
+    query.set("download", "true");
   }
-  return `${getBackendBaseURL()}/api/threads/${threadId}/artifacts${filepath}${download ? "?download=true" : ""}`;
+  if (preview) {
+    query.set("preview", "true");
+  }
+  const suffix = query.size > 0 ? `?${query.toString()}` : "";
+
+  if (isMock) {
+    return `${getBackendBaseURL()}/mock/api/threads/${threadId}/artifacts${filepath}${suffix}`;
+  }
+  return `${getBackendBaseURL()}/api/threads/${threadId}/artifacts${filepath}${suffix}`;
 }
 
 export function extractArtifactsFromThread(thread: AgentThread) {

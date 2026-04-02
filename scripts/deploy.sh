@@ -16,9 +16,7 @@ REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 cd "$REPO_ROOT"
 
 DOCKER_DIR="$REPO_ROOT/docker"
-COMPOSE_CMD=(docker compose -p deer-flow -f "$DOCKER_DIR/docker-compose.yaml")
-
-# ── Colors ────────────────────────────────────────────────────────────────────
+COMPOSE_CMD=(docker compose --env-file "$REPO_ROOT/.env" -p deer-flow -f "$DOCKER_DIR/docker-compose.yaml")
 
 GREEN='\033[0;32m'
 BLUE='\033[0;34m'
@@ -26,7 +24,124 @@ YELLOW='\033[1;33m'
 RED='\033[0;31m'
 NC='\033[0m'
 
-# ── DEER_FLOW_HOME ────────────────────────────────────────────────────────────
+load_dotenv_value() {
+    local key="$1"
+    local env_file="$REPO_ROOT/.env"
+
+    [ -f "$env_file" ] || return 0
+
+    python3 - "$env_file" "$key" <<'EOF'
+import sys
+from pathlib import Path
+
+env_file, key = sys.argv[1], sys.argv[2]
+for raw_line in Path(env_file).read_text().splitlines():
+    line = raw_line.strip()
+    if not line or line.startswith('#') or '=' not in line:
+        continue
+    name, value = line.split('=', 1)
+    if name.strip() != key:
+        continue
+    value = value.strip()
+    if len(value) >= 2 and value[0] == value[-1] and value[0] in {'"', "'"}:
+        value = value[1:-1]
+    print(value)
+    break
+EOF
+}
+
+append_no_proxy_entry() {
+    local value="$1"
+    local entry="$2"
+
+    case ",$value," in
+        *",$entry,"*)
+            printf '%s' "$value"
+            ;;
+        "")
+            printf '%s' "$entry"
+            ;;
+        *)
+            printf '%s,%s' "$value" "$entry"
+            ;;
+    esac
+}
+
+ensure_internal_no_proxy() {
+    local current="${NO_PROXY:-}"
+    local public_host
+    local entry
+
+    if [ -z "$current" ]; then
+        current="$(load_dotenv_value NO_PROXY)"
+    fi
+    if [ -z "$current" ]; then
+        current="${no_proxy:-}"
+    fi
+    if [ -z "$current" ]; then
+        current="$(load_dotenv_value no_proxy)"
+    fi
+
+    public_host="$(printf '%s' "$BETTER_AUTH_BASE_URL" | sed -E 's#^[a-zA-Z]+://([^/:]+).*#\1#')"
+
+    for entry in \
+        localhost \
+        127.0.0.1 \
+        ::1 \
+        host.docker.internal \
+        gateway \
+        langgraph \
+        frontend \
+        nginx \
+        postgres \
+        provisioner \
+        deer-flow-gateway \
+        deer-flow-langgraph \
+        deer-flow-frontend \
+        deer-flow-nginx \
+        deer-flow-postgres \
+        deer-flow-provisioner \
+        "$public_host"; do
+        [ -n "$entry" ] || continue
+        current="$(append_no_proxy_entry "$current" "$entry")"
+    done
+
+    export NO_PROXY="$current"
+    export no_proxy="$current"
+}
+
+if [ -z "$PORT" ]; then
+    export PORT="$(load_dotenv_value PORT)"
+fi
+if [ -z "$PORT" ]; then
+    export PORT=2026
+fi
+
+if [ -z "$BETTER_AUTH_BASE_URL" ]; then
+    export BETTER_AUTH_BASE_URL="$(load_dotenv_value BETTER_AUTH_BASE_URL)"
+fi
+if [ -z "$BETTER_AUTH_BASE_URL" ]; then
+    _public_host="${DEER_FLOW_PUBLIC_HOST:-}"
+    if [ -z "$_public_host" ]; then
+        _public_host="$(hostname -I 2>/dev/null | awk '{print $1}')"
+    fi
+    if [ -z "$_public_host" ]; then
+        _public_host=localhost
+    fi
+    export BETTER_AUTH_BASE_URL="http://$_public_host:$PORT"
+fi
+echo -e "${GREEN}✓ BETTER_AUTH_BASE_URL=$BETTER_AUTH_BASE_URL${NC}"
+
+if [ -z "$NEXT_PUBLIC_LANGGRAPH_BASE_URL" ]; then
+    export NEXT_PUBLIC_LANGGRAPH_BASE_URL="$(load_dotenv_value NEXT_PUBLIC_LANGGRAPH_BASE_URL)"
+fi
+if [ -z "$NEXT_PUBLIC_LANGGRAPH_BASE_URL" ]; then
+    export NEXT_PUBLIC_LANGGRAPH_BASE_URL=/api/langgraph
+fi
+echo -e "${GREEN}✓ NEXT_PUBLIC_LANGGRAPH_BASE_URL=$NEXT_PUBLIC_LANGGRAPH_BASE_URL${NC}"
+
+ensure_internal_no_proxy
+echo -e "${GREEN}✓ NO_PROXY includes DeerFlow internal hosts${NC}"
 
 if [ -z "$DEER_FLOW_HOME" ]; then
     export DEER_FLOW_HOME="$REPO_ROOT/backend/.deer-flow"
@@ -34,18 +149,13 @@ fi
 echo -e "${BLUE}DEER_FLOW_HOME=$DEER_FLOW_HOME${NC}"
 mkdir -p "$DEER_FLOW_HOME"
 
-# ── DEER_FLOW_REPO_ROOT (for skills host path in DooD) ───────────────────────
-
 export DEER_FLOW_REPO_ROOT="$REPO_ROOT"
-
-# ── config.yaml ───────────────────────────────────────────────────────────────
 
 if [ -z "$DEER_FLOW_CONFIG_PATH" ]; then
     export DEER_FLOW_CONFIG_PATH="$REPO_ROOT/config.yaml"
 fi
 
 if [ ! -f "$DEER_FLOW_CONFIG_PATH" ]; then
-    # Try to seed from repo (config.example.yaml is the canonical template)
     if [ -f "$REPO_ROOT/config.example.yaml" ]; then
         cp "$REPO_ROOT/config.example.yaml" "$DEER_FLOW_CONFIG_PATH"
         echo -e "${GREEN}✓ Seeded config.example.yaml → $DEER_FLOW_CONFIG_PATH${NC}"
@@ -61,8 +171,6 @@ else
     echo -e "${GREEN}✓ config.yaml: $DEER_FLOW_CONFIG_PATH${NC}"
 fi
 
-# ── extensions_config.json ───────────────────────────────────────────────────
-
 if [ -z "$DEER_FLOW_EXTENSIONS_CONFIG_PATH" ]; then
     export DEER_FLOW_EXTENSIONS_CONFIG_PATH="$REPO_ROOT/extensions_config.json"
 fi
@@ -72,18 +180,12 @@ if [ ! -f "$DEER_FLOW_EXTENSIONS_CONFIG_PATH" ]; then
         cp "$REPO_ROOT/extensions_config.json" "$DEER_FLOW_EXTENSIONS_CONFIG_PATH"
         echo -e "${GREEN}✓ Seeded extensions_config.json → $DEER_FLOW_EXTENSIONS_CONFIG_PATH${NC}"
     else
-        # Create a minimal empty config so the gateway doesn't fail on startup
         echo '{"mcpServers":{},"skills":{}}' > "$DEER_FLOW_EXTENSIONS_CONFIG_PATH"
         echo -e "${YELLOW}⚠ extensions_config.json not found, created empty config at $DEER_FLOW_EXTENSIONS_CONFIG_PATH${NC}"
     fi
 else
     echo -e "${GREEN}✓ extensions_config.json: $DEER_FLOW_EXTENSIONS_CONFIG_PATH${NC}"
 fi
-
-
-# ── BETTER_AUTH_SECRET ───────────────────────────────────────────────────────
-# Required by Next.js in production. Generated once and persisted so auth
-# sessions survive container restarts.
 
 _secret_file="$DEER_FLOW_HOME/.better-auth-secret"
 if [ -z "$BETTER_AUTH_SECRET" ]; then
@@ -99,8 +201,6 @@ if [ -z "$BETTER_AUTH_SECRET" ]; then
         echo -e "${GREEN}✓ BETTER_AUTH_SECRET generated → $_secret_file${NC}"
     fi
 fi
-
-# ── detect_sandbox_mode ───────────────────────────────────────────────────────
 
 detect_sandbox_mode() {
     local sandbox_use=""
@@ -135,11 +235,7 @@ detect_sandbox_mode() {
     fi
 }
 
-# ── down ──────────────────────────────────────────────────────────────────────
-
 if [ "$CMD" = "down" ]; then
-    # Set minimal env var defaults so docker compose can parse the file without
-    # warning about unset variables that appear in volume specs.
     export DEER_FLOW_HOME="${DEER_FLOW_HOME:-$REPO_ROOT/backend/.deer-flow}"
     export DEER_FLOW_CONFIG_PATH="${DEER_FLOW_CONFIG_PATH:-$DEER_FLOW_HOME/config.yaml}"
     export DEER_FLOW_EXTENSIONS_CONFIG_PATH="${DEER_FLOW_EXTENSIONS_CONFIG_PATH:-$DEER_FLOW_HOME/extensions_config.json}"
@@ -150,14 +246,10 @@ if [ "$CMD" = "down" ]; then
     exit 0
 fi
 
-# ── Banner ────────────────────────────────────────────────────────────────────
-
 echo "=========================================="
 echo "  DeerFlow Production Deployment"
 echo "=========================================="
 echo ""
-
-# ── Step 1: Detect sandbox mode ──────────────────────────────────────────────
 
 sandbox_mode="$(detect_sandbox_mode)"
 echo -e "${BLUE}Sandbox mode: $sandbox_mode${NC}"
@@ -169,9 +261,6 @@ else
     services="frontend gateway langgraph nginx"
     extra_args=""
 fi
-
-
-# ── DEER_FLOW_DOCKER_SOCKET ───────────────────────────────────────────────────
 
 if [ -z "$DEER_FLOW_DOCKER_SOCKET" ]; then
     export DEER_FLOW_DOCKER_SOCKET="/var/run/docker.sock"
@@ -188,9 +277,6 @@ if [ "$sandbox_mode" != "local" ]; then
 fi
 
 echo ""
-
-# ── Step 2: Build and start ───────────────────────────────────────────────────
-
 echo "Building images and starting containers..."
 echo ""
 
@@ -202,9 +288,9 @@ echo "=========================================="
 echo "  DeerFlow is running!"
 echo "=========================================="
 echo ""
-echo "  🌐 Application: http://localhost:${PORT:-2026}"
-echo "  📡 API Gateway: http://localhost:${PORT:-2026}/api/*"
-echo "  🤖 LangGraph:   http://localhost:${PORT:-2026}/api/langgraph/*"
+echo "  🌐 Application: $BETTER_AUTH_BASE_URL"
+echo "  📡 API Gateway: $BETTER_AUTH_BASE_URL/api/*"
+echo "  🤖 LangGraph:   $BETTER_AUTH_BASE_URL/api/langgraph/*"
 echo ""
 echo "  Manage:"
 echo "    make down        — stop and remove containers"

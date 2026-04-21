@@ -86,6 +86,23 @@ def _record_to_response(record: RunRecord) -> RunResponse:
     )
 
 
+async def _empty_sse_stream():
+    yield 'event: end\ndata: null\n\n'
+
+
+def _stale_run_stream_response(run_id: str) -> StreamingResponse:
+    logger.info("Ignoring stale resumable stream request for missing run %s", run_id)
+    return StreamingResponse(
+        _empty_sse_stream(),
+        media_type="text/event-stream",
+        headers={
+            "Cache-Control": "no-cache",
+            "Connection": "keep-alive",
+            "X-Accel-Buffering": "no",
+        },
+    )
+
+
 # ---------------------------------------------------------------------------
 # Endpoints
 # ---------------------------------------------------------------------------
@@ -212,7 +229,7 @@ async def join_run(thread_id: str, run_id: str, request: Request) -> StreamingRe
     run_mgr = get_run_manager(request)
     record = run_mgr.get(run_id)
     if record is None or record.thread_id != thread_id:
-        raise HTTPException(status_code=404, detail=f"Run {run_id} not found")
+        return _stale_run_stream_response(run_id)
 
     return StreamingResponse(
         sse_consumer(bridge, record, request, run_mgr),
@@ -243,7 +260,7 @@ async def stream_existing_run(
     run_mgr = get_run_manager(request)
     record = run_mgr.get(run_id)
     if record is None or record.thread_id != thread_id:
-        raise HTTPException(status_code=404, detail=f"Run {run_id} not found")
+        return _stale_run_stream_response(run_id)
 
     # Cancel if an action was requested (stop-button / interrupt flow)
     if action is not None:
